@@ -1,0 +1,188 @@
+services:
+  redis:
+    image: redis:7-alpine
+    platform: linux/arm64
+    container_name: pilot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - pilot-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    platform: linux/arm64
+    container_name: pilot-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    networks:
+      - pilot-network
+
+  mysql:
+    image: mysql:8.0
+    platform: linux/arm64
+    container_name: pilot-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: pilot
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - pilot-network
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    platform: linux/arm64
+    container_name: pilot-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - pilot-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    platform: linux/arm64
+    container_name: pilot-jaeger
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:16686 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - pilot-network
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    platform: linux/arm64
+    container_name: pilot-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/pilot-demo-overview.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - pilot-network
+    depends_on:
+      - prometheus
+
+  # Full-stack Pilot API (ARM-native image). Host `go run` path still uses make run + deps-only compose profile.
+  pilot:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+    image: pilot:local
+    platform: linux/arm64
+    container_name: pilot-api
+    env_file:
+      - ../../.env
+    environment:
+      PILOT_CONFIG: /app/manifest/config/config.docker.yaml
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ES_USERNAME: ${ES_USERNAME:-}
+      ES_PASSWORD: ${ES_PASSWORD:-}
+      PILOT_API_KEY: ${PILOT_API_KEY:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    networks:
+      - pilot-network
+    profiles:
+      - app
+
+  # One-shot E2E inside the compose network (requires profile app + built image).
+  e2e:
+    image: pilot:local
+    platform: linux/arm64
+    container_name: pilot-e2e
+    env_file:
+      - ../../.env
+    environment:
+      PILOT_CONFIG: /app/manifest/config/config.docker.yaml
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    entrypoint: ["/app/e2echeck"]
+    depends_on:
+      pilot:
+        condition: service_healthy
+    networks:
+      - pilot-network
+    profiles:
+      - e2e
+
+volumes:
+  redis-data:
+  es-data:
+  mysql-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  pilot-network:
+    driver: bridge

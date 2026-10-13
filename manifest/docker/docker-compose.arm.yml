@@ -1,0 +1,12 @@
+# Apple Silicon / ARM 本机 overlay：降低 ES 堆与并发压力。
+# 用法: docker compose -f manifest/docker/docker-compose.yml -f manifest/docker/docker-compose.arm.yml up -d
+services:
+  elasticsearch:
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms384m -Xmx384m"
+    deploy:
+      resources:
+        limits:
+          memory: 768M

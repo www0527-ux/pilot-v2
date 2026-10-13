@@ -1,0 +1,12 @@
+[
+  {"query": "find the database timeout runbook", "expected_intent": "knowledge_query", "expect_evidence": false},
+  {"query": "查看知识库里的最佳实践文档", "expected_intent": "knowledge_query", "expect_evidence": false},
+  {"query": "show error logs for the last hour", "expected_intent": "observability_query", "expect_evidence": true},
+  {"query": "查询 pilot-api 的告警和指标", "expected_intent": "observability_query", "expect_evidence": true},
+  {"query": "investigate timeout service=checkout-api", "expected_intent": "incident_triage", "expect_evidence": true, "expected_service": "checkout-api"},
+  {"query": "线上故障排查 异常超时", "expected_intent": "incident_triage", "expect_evidence": true},
+  {"query": "what is the deployment process", "expected_intent": "general_analysis", "expect_evidence": false},
+  {"query": "帮我看看整体情况", "expected_intent": "general_analysis", "expect_evidence": false},
+  {"query": "dashboard for latency metrics", "expected_intent": "observability_query", "expect_evidence": true},
+  {"query": "outage on payment service", "expected_intent": "incident_triage", "expect_evidence": true}
+]

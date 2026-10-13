@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Pilot Dashboards
+    orgId: 1
+    folder: Pilot 总览
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

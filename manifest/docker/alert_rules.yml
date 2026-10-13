@@ -1,0 +1,92 @@
+groups:
+  - name: pilot-runtime
+    rules:
+      - alert: PilotDemoTrafficActive
+        expr: sum(increase(pilot_http_requests_total{route!="/metrics"}[5m])) > 20
+        for: 30s
+        labels:
+          severity: warning
+          service: pilot-api
+        annotations:
+          summary: Pilot 演示流量活跃
+          description: 最近 5 分钟内 Pilot 存在持续访问流量，适合用于前端展示与联调。
+
+      - alert: PilotObservabilityBoardBusy
+        expr: sum(increase(pilot_http_requests_total{route=~"/api/v1/observability/.*"}[10m])) > 10
+        for: 30s
+        labels:
+          severity: info
+          service: pilot-api
+        annotations:
+          summary: 可观测性看板请求活跃
+          description: 最近 10 分钟内可观测性接口调用较多，说明看板流量正在持续产生。
+
+      - alert: PilotHealthEndpointBusy
+        expr: sum(increase(pilot_http_requests_total{route="/api/v1/health"}[10m])) > 15
+        for: 30s
+        labels:
+          severity: info
+          service: pilot-api
+        annotations:
+          summary: 健康检查流量持续存在
+          description: 最近 10 分钟健康检查请求较多，说明首页与外部探测都在活跃访问。
+
+      - alert: PilotHistoryReplayActive
+        expr: sum(increase(pilot_http_requests_total{route="/api/v1/chat/history"}[15m])) > 8
+        for: 30s
+        labels:
+          severity: warning
+          service: pilot-api
+        annotations:
+          summary: 会话历史回放请求活跃
+          description: 最近 15 分钟历史会话接口调用较多，适合展示排障复盘场景。
+
+      - alert: PilotLogsPanelHot
+        expr: sum(increase(pilot_http_requests_total{route="/api/v1/observability/logs"}[10m])) > 8
+        for: 30s
+        labels:
+          severity: warning
+          service: pilot-api
+        annotations:
+          summary: 日志面板访问频繁
+          description: 最近 10 分钟日志查询接口调用频繁，说明前端日志展示处于活跃状态。
+
+      - alert: PilotMetricsPanelHot
+        expr: sum(increase(pilot_http_requests_total{route="/api/v1/observability/metrics"}[10m])) > 8
+        for: 30s
+        labels:
+          severity: info
+          service: pilot-api
+        annotations:
+          summary: 指标面板访问频繁
+          description: 最近 10 分钟指标查询接口持续被访问，图表数据处于活跃刷新状态。
+
+      - alert: PilotOverviewPanelHot
+        expr: sum(increase(pilot_http_requests_total{route="/api/v1/observability/overview"}[10m])) > 8
+        for: 30s
+        labels:
+          severity: critical
+          service: pilot-api
+        annotations:
+          summary: 总览看板访问高峰
+          description: 最近 10 分钟总览接口访问量较高，说明演示看板正在被频繁刷新。
+
+      - alert: PilotHTTPServerErrors
+        expr: sum(rate(pilot_http_requests_total{status=~"5.."}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: pilot-api
+        annotations:
+          summary: Pilot 出现 5xx 错误
+          description: 最近 5 分钟内 Pilot 存在 HTTP 5xx 响应。
+
+      - alert: PilotHTTPLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(pilot_http_request_duration_seconds_bucket[5m])) by (le, route)) > 1
+        for: 2m
+        labels:
+          severity: warning
+          service: pilot-api
+        annotations:
+          summary: Pilot 请求延迟升高
+          description: Pilot 最近 5 分钟 P95 延迟超过 1 秒。

@@ -1,0 +1,136 @@
+# Compose 内网配置：服务名指向 docker-compose 网络。
+# 供容器内 Pilot / e2echeck / agenteval 使用；本机 go run 继续用 config.yaml。
+
+server:
+  address: ":8080"
+  env: "docker"
+  base_url: "http://pilot:8080"
+  allow_degraded: true
+
+logger:
+  level: "info"
+
+security:
+  auth:
+    enabled: false
+    api_key: "${PILOT_API_KEY}"
+  cors:
+    allowed_origins: []
+  rate_limit:
+    enabled: false
+    requests_per_minute: 120
+
+llm:
+  main_model:
+    api_key: "${DASHSCOPE_API_KEY}"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-plus"
+    temperature: 0.5
+    max_tokens: 4096
+  evidence_model:
+    api_key: "${DASHSCOPE_API_KEY}"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: ""
+    temperature: 0.2
+    max_tokens: 2048
+
+embedding:
+  api_key: "${DASHSCOPE_API_KEY}"
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: "text-embedding-v4"
+  dimension: 1024
+
+redis:
+  addr: "redis:6379"
+  password: "${REDIS_PASSWORD}"
+  db: 0
+  pool_size: 10
+  memory:
+    ttl: 3600
+    max_messages: 20
+    chunk_size: 10
+
+elasticsearch:
+  addresses:
+    - "http://elasticsearch:9200"
+  username: "${ES_USERNAME}"
+  password: "${ES_PASSWORD}"
+  knowledge_index: "pilot_knowledge"
+  max_results: 5
+
+database:
+  host: "mysql"
+  port: 3306
+  user: "root"
+  password: "${MYSQL_ROOT_PASSWORD}"
+  name: "pilot"
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600
+
+observability:
+  service_name: "pilot-api"
+  prometheus:
+    url: "http://prometheus:9090"
+    timeout: 30
+  log:
+    url: "http://elasticsearch:9200"
+    index: "pilot_logs"
+    slow_request_ms: 1000
+  trace:
+    url: "http://jaeger:16686"
+    otlp_http_endpoint: "http://jaeger:4318"
+    sample_ratio: 1.0
+
+agent:
+  max_iterations: 25
+  timeout: 300
+  multi_agent:
+    enabled: true
+    evidence_mode: "deterministic"
+    react_max_steps: 8
+    evidence_window_minutes: 30
+    branch_timeout_seconds: 120
+    max_replan_rounds: 1
+    runtime: "legacy"
+    correlation_enabled: true
+    verification:
+      mode: "evidence_graph"
+      min_confidence: 0.65
+      min_independent_sources: 2
+      replan_window_multiplier: 2
+    hitl:
+      enabled: false
+      wide_window_minutes: 120
+      store: "redis"
+    planner:
+      mode: "rule"
+      min_confidence: 0.6
+      timeout_ms: 3000
+
+memory:
+  episodic:
+    mode: "hybrid"  # ES vector+BM25 with SQL fallback
+    index: "pilot_episodic"
+    top_k: 3
+
+rag:
+  retrieval_mode: "hybrid"
+  bm25_top_k: 10
+  vector_top_k: 10
+  final_top_k: 5
+  rrf_k: 60
+  fallback_to_bm25: true
+  chunk_size: 800
+  chunk_overlap: 120
+  candidate_multiplier: 3
+  max_chunks_per_doc: 2
+  reranker_mode: "lexical"
+
+mcp:
+  enabled: false
+  listen: ":8081"
+  read_only: true
+
+prompts:
+  path: "internal/prompts/prompts.yaml"

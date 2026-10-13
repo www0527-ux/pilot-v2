@@ -1,0 +1,30 @@
+apiVersion: 1
+
+datasources:
+  - name: Pilot Prometheus
+    uid: pilot-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+
+  - name: Pilot Elasticsearch
+    uid: pilot-elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    editable: true
+    jsonData:
+      index: pilot_logs
+      interval: NoPattern
+      timeField: timestamp
+      logMessageField: message
+      logLevelField: level
+
+  - name: Pilot Jaeger
+    uid: pilot-jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: true

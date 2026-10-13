@@ -1,0 +1,172 @@
+# Pilot AI 驱动的可观测性平台配置
+
+server:
+  address: ":8080"
+  env: "local"
+  base_url: "http://localhost:8080"
+  # true：OTLP 导出或运行日志索引失败时降级启动；Redis/MySQL/ES/模型仍必须可用。
+  allow_degraded: false
+
+logger:
+  level: "info"  # all / debug / info / warn (warning alias) / error / fatal
+
+# 生产边界：默认关闭，本地同域前端无需密钥。
+# 认证主体是共享服务 API Key（Bearer 或 X-API-Key），不是多租户用户体系。
+security:
+  auth:
+    enabled: false
+    api_key: "${PILOT_API_KEY}"
+  cors:
+    # 空列表表示同域部署，不注入 CORS 头；跨域时显式填写来源，或单独使用 ["*"]。
+    allowed_origins: []
+  rate_limit:
+    enabled: false
+    requests_per_minute: 120
+
+# LLM 模型配置
+llm:
+  # 主模型（用于复杂推理）
+  main_model:
+    # 推荐：从根目录 .env 注入 DASHSCOPE_API_KEY
+    api_key: "${DASHSCOPE_API_KEY}"
+    # 官方文档（首调 API，含 OpenAI 兼容端点与鉴权）：https://help.aliyun.com/zh/model-studio/first-api-call-to-qwen
+    # 新加坡地域请改为：https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    # 官方文档（OpenAI 兼容支持模型名）：https://help.aliyun.com/zh/model-studio/batch-interfaces-compatible-with-openai/
+    model: "qwen-plus"
+    temperature: 0.5
+    max_tokens: 4096
+  # 可选：证据采集 / 意图分类用模型；未配置时回退 main_model
+  evidence_model:
+    api_key: "${DASHSCOPE_API_KEY}"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: ""
+    temperature: 0.2
+    max_tokens: 2048
+
+# Embedding 模型配置
+embedding:
+  api_key: "${DASHSCOPE_API_KEY}"
+  # 官方文档（Embedding OpenAI 兼容）：https://help.aliyun.com/zh/model-studio/embedding-interfaces-compatible-with-openai
+  # 新加坡地域请改为：https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: "text-embedding-v4"
+  dimension: 1024
+
+# Redis 配置（短期记忆）
+redis:
+  addr: "localhost:6379"
+  password: "${REDIS_PASSWORD}"
+  db: 0
+  pool_size: 10
+  # 短期记忆配置
+  memory:
+    ttl: 3600  # 1小时过期
+    max_messages: 20  # 最大消息数
+    # 大 key 优化
+    chunk_size: 10  # 单个 key 最大消息数，必须小于 max_messages 才会触发分片
+
+# Elasticsearch 配置（知识库 RAG）
+elasticsearch:
+  addresses:
+    - "http://localhost:9200"
+  username: "${ES_USERNAME}"
+  password: "${ES_PASSWORD}"
+  # 知识库索引配置
+  knowledge_index: "pilot_knowledge"
+  max_results: 5
+
+# MySQL 配置（长期会话历史）
+database:
+  host: "127.0.0.1"
+  port: 3306
+  user: "root"
+  password: "${MYSQL_ROOT_PASSWORD}"
+  name: "pilot"
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600
+
+# 可观测性数据源配置
+observability:
+  service_name: "pilot-api"
+
+  # Prometheus 配置
+  prometheus:
+    url: "http://localhost:9090"
+    timeout: 30
+
+  # 日志源配置（Elasticsearch）
+  log:
+    url: "http://localhost:9200"
+    index: "pilot_logs"
+    slow_request_ms: 1000
+
+  # 链路追踪配置（Jaeger + OTLP HTTP 上报）
+  trace:
+    url: "http://localhost:16686"
+    otlp_http_endpoint: "http://localhost:4318"
+    sample_ratio: 1.0
+
+# AI Agent 配置
+agent:
+  max_iterations: 25  # ADK 最大模型调用轮次
+  context_tokens: 24000  # 多语言保守估算达到此阈值时，由官方 summarization 压缩上下文
+  timeout: 300  # 单次 Chat 或 Multi-agent 请求的最长执行时间（秒）
+
+  # 角色化排障工作流。通过 /api/v1/chat/multi-agent 调用，不影响默认聊天接口。
+  multi_agent:
+    enabled: false
+    # deterministic 固定采集告警和错误日志；react 由主模型在受限工具集中选择查询。
+    evidence_mode: "deterministic"  # deterministic 或 react
+    react_max_steps: 8  # 仅 evidence_mode=react 生效
+    evidence_window_minutes: 30
+    branch_timeout_seconds: 120
+    max_replan_rounds: 1
+    runtime: "legacy"  # legacy | adk
+    correlation_enabled: true
+    # 证据图不是“模型自报置信度”：按独立数据源、派生关系、反证与引用完整性确定是否继续取证或弃权。
+    verification:
+      mode: "evidence_graph"  # evidence_graph | off
+      min_confidence: 0.65
+      min_independent_sources: 2
+      replan_window_multiplier: 2
+    hitl:
+      enabled: false
+      wide_window_minutes: 120
+      store: "redis"  # redis | memory
+    planner:
+      mode: "rule"  # rule | hybrid；hybrid 需 LLM 意图分类，失败回退规则
+      min_confidence: 0.6
+      timeout_ms: 3000
+
+# 分层记忆：情景事故记忆（sql=仅 MySQL；hybrid=ES 向量+BM25，失败降级 sql）
+memory:
+  episodic:
+    mode: "sql"
+    index: "pilot_episodic"
+    top_k: 3
+
+# 可选只读 MCP facade（旁路进程 cmd/mcpserver）
+mcp:
+  enabled: false
+  listen: ":8081"
+  read_only: true
+
+# 唯一权威 Prompt 文件；严格加载，缺键、未知键或非法变量都会阻止启动。
+prompts:
+  path: "internal/prompts/prompts.yaml"
+
+# RAG 多路召回配置。hybrid 分别执行 BM25 与向量召回，使用 RRF 进行去重融合。
+rag:
+  retrieval_mode: "hybrid"  # bm25、vector 或 hybrid
+  bm25_top_k: 10
+  vector_top_k: 10
+  final_top_k: 5
+  rrf_k: 60
+  fallback_to_bm25: true
+  chunk_size: 800          # 按 Unicode rune 计；不会拆分组合字符或 emoji 序列
+  chunk_overlap: 120
+  candidate_multiplier: 3 # 融合后扩大候选池再重排
+  max_chunks_per_doc: 2
+  reranker_mode: "lexical" # lexical | model；model 失败显式降级 lexical

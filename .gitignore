@@ -1,0 +1,36 @@
+.env
+.env.*
+!.env.example
+bin/
+dist/
+tmp/
+artifacts/
+*.log
+.DS_Store
+
+# Local tools, caches, and generated files
+.claude/
+.idea/
+.vscode/
+node_modules/
+__pycache__/
+*.py[cod]
+*.exe
+*.test
+coverage.out
+
+# Local credentials and persisted application data
+*.cookies
+*.pem
+*.key
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+/data/
+/uploads/
+
+# Learning exercises and macOS archive metadata
+/practice/
+__MACOSX/
+._*

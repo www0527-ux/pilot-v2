@@ -1,0 +1,39 @@
+[
+  {
+    "id": "incident-zh-1",
+    "query": "checkout 服务故障排查 service:=checkout",
+    "expect_intent": "incident_triage",
+    "expect_evidence": true,
+    "expect_service": "checkout",
+    "max_latency_ms": 50,
+    "tags": ["offline", "intent"]
+  },
+  {
+    "id": "obs-metrics-1",
+    "query": "查看 prometheus 监控指标",
+    "expect_intent": "observability_query",
+    "expect_evidence": true,
+    "max_latency_ms": 50,
+    "tags": ["offline", "intent"]
+  },
+  {
+    "id": "knowledge-1",
+    "query": "知识库里怎么配置 Pilot 的 RAG hybrid 检索",
+    "expect_intent": "knowledge_query",
+    "expect_evidence": false,
+    "max_latency_ms": 50,
+    "tags": ["offline", "intent"]
+  },
+  {
+    "id": "incident-live-1",
+    "query": "pilot-api 最近告警和错误日志排查 service:=pilot-api",
+    "expect_intent": "incident_triage",
+    "expect_evidence": true,
+    "expect_corr": false,
+    "require_citation": false,
+    "require_verification": true,
+    "max_contradictions": 2,
+    "max_latency_ms": 180000,
+    "tags": ["live"]
+  }
+]

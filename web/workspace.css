@@ -1,0 +1,143 @@
+/* Task-first layout. Existing palette and business controls are reused. */
+[hidden] { display:none !important; }
+.panel.active { animation:none; }
+.topbar { min-height:70px; padding:14px 24px; gap:16px; }
+.page-context h1 { font-size:1.08rem; white-space:nowrap; }
+.topbar-tools,.chat-tools { display:flex; align-items:center; gap:10px; }
+.service-status { display:flex; align-items:center; gap:9px; color:var(--text-secondary); font-size:12px; white-space:nowrap; }
+.topbar .btn { min-height:34px; padding:6px 12px; }
+main { padding:20px 24px 28px; max-width:1800px; }
+.chat-stage { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; gap:20px; }
+.chat-layout { display:block; min-width:0; width:100%; max-width:1020px; margin:0 auto; }
+.conversation-card { min-height:0; height:calc(100dvh - 120px); box-shadow:var(--shadow-xs); border:1px solid var(--border); border-radius:12px; }
+.conversation-head { position:relative; min-height:48px; padding:10px 20px; display:flex; justify-content:space-between; flex:none; font-size:12px; color:var(--text-secondary); }
+.messages { flex:1 1 auto; height:auto; min-height:150px; max-height:none; padding:22px clamp(16px,3vw,42px); background:#fff; overflow-y:auto; }
+.messages.is-empty::before { content:'描述遇到的问题，Pilot 将协助你排查。'; display:block; text-align:center; color:var(--text-muted); font-size:15px; margin:18vh auto 0; max-width:380px; }
+.msg { max-width:820px; margin-left:auto; margin-right:auto; }
+.msg-assistant .msg-bubble { border:0; background:transparent; padding:6px 0; box-shadow:none; }
+.msg-content { overflow-wrap:anywhere; }
+.msg-content pre,.msg-content table { max-width:100%; overflow:auto; }
+.msg-content pre { white-space:pre-wrap; }
+.quick-prompts { padding:10px 20px 0; border:0; background:#fff; opacity:.8; flex:none; }
+.quick-prompt { font-size:11px; }
+.composer { flex:none; padding:12px 20px 14px; background:#fff; }
+.composer textarea { min-height:80px; max-height:200px; }
+.composer-actions { margin-top:8px; justify-content:flex-end; }
+.feedback-fold { margin-top:8px; color:var(--text-muted); font-size:11px; }
+.feedback-fold summary { cursor:pointer; }
+.feedback-controls { margin-top:8px; }
+.agent-status { min-height:24px; font-size:12px; }
+.agent-status[data-status="completed"] { display:none; }
+.execution-panel { margin:6px 0 12px; border:0; background:transparent; box-shadow:none; }
+.execution-heading { padding:4px 0; color:var(--text-secondary); font-size:12px; }
+.execution-list { background:var(--surface-muted); border-radius:8px; padding:10px; }
+.agent-notice { font-size:12px; }
+.experience-card { padding:9px 0; border:0; border-top:1px solid var(--border); border-radius:0; background:transparent; }
+.experience-card details { flex-basis:100%; min-width:0; }
+.experience-card .btn { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.experience-card pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; font:11px/1.6 var(--font-mono); }
+.session-settings { position:relative; }
+.session-settings > summary { list-style:none; cursor:pointer; }
+.session-settings > summary::-webkit-details-marker { display:none; }
+.settings-content { position:absolute; z-index:60; right:0; top:calc(100% + 10px); width:330px; max-width:calc(100vw - 32px); max-height:70dvh; overflow-y:auto; padding:18px; border:1px solid var(--border); border-radius:12px; background:white; box-shadow:var(--shadow-md); }
+.settings-content .copy-id { float:right; border:0; background:none; color:var(--accent); font:inherit; cursor:pointer; }
+.settings-help { font-size:12px; color:var(--text-secondary); }
+.settings-help p { margin-top:8px; overflow-wrap:anywhere; }
+.settings-content fieldset { margin-bottom:14px; }
+.settings-content fieldset input { width:auto; margin-right:8px; }
+.session-issues { padding:0; border:0; background:none; max-height:none; }
+.session-issues > summary { cursor:pointer; color:var(--accent); font-size:12px; }
+.session-issues[open] { position:absolute; right:12px; top:12px; z-index:30; width:min(520px,calc(100% - 24px)); padding:14px; border:1px solid var(--border); border-radius:10px; background:white; box-shadow:var(--shadow-md); max-height:65dvh; overflow:auto; }
+.issue-toolbar { margin:12px 0; }
+.issue-toolbar .btn { font-size:11px; min-height:30px; padding:4px 8px; }
+.issue-row { padding:12px 0; }
+.issue-row > summary { font-size:12px; }
+.issue-row p { font-size:12px; }
+.issue-adjustments { margin-top:10px; font-size:11px; color:var(--text-secondary); }
+.issue-controls { margin-top:10px; }
+.history-dialog { width:min(500px,calc(100vw - 32px)); max-height:75dvh; border:1px solid var(--border); border-radius:14px; padding:22px; margin:auto; color:var(--text); box-shadow:var(--shadow-xl); }
+.history-dialog::backdrop { background:rgba(20,32,29,.25); }
+.history-dialog header { display:flex; align-items:center; justify-content:space-between; }
+.history-dialog h2 { font-size:18px; }
+.history-dialog p { font-size:12px; color:var(--text-secondary); margin:12px 0; }
+#historyList { max-height:35dvh; overflow:auto; margin:12px 0; }
+.history-row { display:flex; flex-direction:column; text-align:left; width:100%; gap:4px; border:0; border-bottom:1px solid var(--border); background:transparent; padding:12px 4px; color:var(--text); cursor:pointer; }
+.history-row:hover { background:var(--surface-muted); }
+.history-row strong { overflow-wrap:anywhere; }
+.history-row span { color:var(--text-muted); font-size:11px; }
+.chat-review-mount:empty { display:none; }
+.review-open .chat-stage { grid-template-columns:minmax(0,1fr) minmax(360px,440px); }
+.experience-drawer { position:relative; top:auto; bottom:auto; right:auto; width:100%; height:calc(100dvh - 120px); z-index:25; border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow-xs); overflow:hidden; }
+.experience-drawer-head { padding:16px 20px; align-items:center; }
+.experience-drawer-head h2 { font-size:15px; }
+.experience-drawer-head .btn { min-height:30px; padding:5px 10px; }
+.experience-drawer-body { padding:20px; }
+.review-toolbar { display:flex; justify-content:flex-end; margin-bottom:12px; }
+.review-toolbar .btn { min-height:30px; padding:4px 10px; }
+.experience-reading h3 { font-size:18px; line-height:1.5; overflow-wrap:anywhere; margin-bottom:8px; }
+.experience-reading section { padding:20px 0; border-bottom:1px solid var(--border); }
+.experience-reading h4 { font-size:12px; color:var(--text-secondary); margin-bottom:10px; font-weight:600; }
+.experience-reading .msg-content { font-size:13px; line-height:1.85; }
+.experience-evidence { border:0; border-radius:0; border-top:1px solid var(--border); padding:16px 0; margin:16px 0; }
+.experience-evidence details { margin:14px 0; }
+.experience-evidence .btn { display:block; margin:6px 0; font-size:11px; }
+.experience-note { font-size:12px; }
+.experience-drawer-footer { padding:12px 16px; }
+#experienceActions { gap:6px; }
+#experienceActions .btn { min-height:34px; font-size:11px; padding:6px 8px; }
+.knowledge-workspace { display:grid; grid-template-columns:minmax(280px,340px) minmax(0,1fr); gap:20px; align-items:start; }
+.experience-center { padding:18px; margin:0; box-shadow:none; }
+.experience-heading { display:block; }
+.experience-heading .section-kicker { display:none; }
+.experience-heading h2 { font-size:17px; }
+.experience-heading p { margin:6px 0 12px; }
+.experience-auto { white-space:normal; font-size:11px; }
+.experience-tabs { gap:5px; }
+.experience-tabs .btn { min-height:30px; padding:4px 8px; font-size:11px; }
+.experience-counts { font-size:11px; margin:12px 0; }
+.experience-filters { display:flex; flex-wrap:wrap; gap:8px; }
+.experience-filters > input { flex-basis:100%; }
+.advanced-filters { flex:1; font-size:12px; }
+.advanced-filters > summary { padding:8px 0; cursor:pointer; }
+.advanced-filters > div { display:grid; gap:6px; }
+.experience-filters > button { align-self:flex-start; min-height:30px; }
+.experience-row { border:0; border-bottom:1px solid var(--border); border-radius:0; margin:0; padding:14px 8px; box-shadow:none; }
+.experience-row strong { font-size:13px; }
+.experience-row > span { font-size:11px; }
+.experience-row.selected { background:var(--accent-soft); border-left:3px solid var(--accent); }
+.experience-list { max-height:calc(100dvh - 460px); min-height:120px; overflow:auto; }
+.experience-pagination { gap:8px; justify-content:space-between; font-size:11px; }
+.experience-pagination .btn { min-height:30px; padding:4px 7px; font-size:11px; }
+.knowledge-detail-mount { min-width:0; position:sticky; top:90px; }
+.detail-placeholder { padding:80px 24px; text-align:center; color:var(--text-muted); background:white; border:1px solid var(--border); border-radius:12px; font-size:13px; }
+.knowledge-detail-mount:has(.experience-drawer:not([hidden])) > .detail-placeholder { display:none; }
+.reference-library { margin-top:24px; padding:16px 0; border-top:1px solid var(--border); }
+.reference-library > summary { font-size:13px; color:var(--text-secondary); cursor:pointer; }
+.reference-library .knowledge-hero { display:none; }
+.reference-library .knowledge-layout { margin-top:16px; }
+.execution-error pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:200px; overflow:auto; font:11px/1.6 var(--font-mono); }
+.toast { bottom:auto; top:82px; }
+@media (max-width:1199px) {
+  .review-open .chat-stage { grid-template-columns:minmax(0,1fr); }
+  .chat-review-mount .experience-drawer { position:fixed; top:0; bottom:0; right:0; width:min(520px,85vw); height:100dvh; z-index:110; border-radius:0; box-shadow:var(--shadow-xl); }
+  .chat-tools { gap:6px; }
+}
+@media (max-width:700px) {
+  main { padding:12px; }
+  .topbar { top:66px; flex-wrap:wrap; gap:8px; padding:10px 12px; }
+  .topbar-tools { gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .topbar .btn { font-size:11px; padding:4px 7px; }
+  .service-status { font-size:10px; }
+  .conversation-card { height:calc(100dvh - 185px); min-height:400px; }
+  .messages { padding:16px 12px; }
+  .conversation-head { padding:10px 12px; }
+  .composer { padding:10px 12px; }
+  .chat-review-mount .experience-drawer { width:100vw; }
+  .knowledge-workspace { grid-template-columns:1fr; }
+  .knowledge-detail-mount { position:static; }
+  .knowledge-detail-mount .experience-drawer { height:75dvh; }
+  .experience-list { max-height:260px; }
+  .experience-drawer-body { padding:16px; }
+  .settings-content { right:0; }
+  .toast { top:145px; bottom:auto; }
+}
