@@ -108,14 +108,17 @@ func TestParentRetrieverReturnsOneCompleteSection(t *testing.T) {
 
 func TestLongParentUsesSourceWindowAndReportsIncomplete(t *testing.T) {
 	body := strings.Repeat("x", 9000)
-	store := &fakeKnowledgeStore{searchResults: [][]elasticsearch.SearchHit{{{Source: map[string]interface{}{"section_id": "s", "start_rune": 5100, "end_rune": 5400}}}}}
+	store := &fakeKnowledgeStore{}
 	r, err := newKnowledgeRetriever(context.Background(), store, fakeEmbedding{}, testRetrieverConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := r.sectionWindow(context.Background(), types.KnowledgeDocument{SectionID: "s", Content: body, StartRune: 100, EndRune: 9100, Metadata: map[string]string{}}, types.KnowledgeDocument{SectionID: "s", ChunkIndex: 3, StartRune: 5000, EndRune: 5200})
-	if err != nil || len([]rune(doc.Content)) != 400 || doc.StartRune != 5000 || doc.Metadata["context_complete"] != "false" {
+	doc, err := r.sectionWindow(context.Background(), types.KnowledgeDocument{SectionID: "s", Content: body, StartRune: 100, EndRune: 9100, Metadata: map[string]string{}}, []types.KnowledgeDocument{{SectionID: "s", ChunkIndex: 3, Content: strings.Repeat("x", 200), StartRune: 5000, EndRune: 5200}})
+	if err != nil || len([]rune(doc.Content)) != maxSectionContextRunes || doc.StartRune > 5000 || doc.EndRune < 5200 || doc.Metadata["context_complete"] != "false" {
 		t.Fatalf("doc=%+v err=%v", doc, err)
+	}
+	if len(store.searchQueries) != 0 {
+		t.Fatal("source windows must not depend on missing neighboring ES chunks")
 	}
 }
 

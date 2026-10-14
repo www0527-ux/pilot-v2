@@ -198,10 +198,12 @@ func (r *KnowledgeRetriever) IndexDocument(ctx context.Context, doc *types.Knowl
 }
 
 func (r *KnowledgeRetriever) Search(ctx context.Context, query string) ([]types.KnowledgeDocument, error) {
+	//找到相关片段
 	results, err := r.SearchDetailed(ctx, query)
 	if err != nil {
 		return nil, err
 	}
+	//扩展
 	return r.expandSections(ctx, results)
 }
 
@@ -237,6 +239,7 @@ type recallSearchResult struct {
 
 func (r *KnowledgeRetriever) recall(ctx context.Context, query string) ([]RetrievedDocument, error) {
 	cfg := r.recallConfig
+	//计算候选池大小
 	poolLimit := maxInt(cfg.FinalTopK*r.candidateMultiplier, cfg.FinalTopK)
 	if cfg.Mode == recallModeBM25 {
 		bm25, err := r.searchBM25(ctx, query, maxInt(cfg.BM25TopK, poolLimit))
@@ -288,13 +291,15 @@ func (r *KnowledgeRetriever) recall(ctx context.Context, query string) ([]Retrie
 	return fused, nil
 }
 
-// BM25检索
+// BM25检索（ES查询）：构建JSON，交给ES查询
 func (r *KnowledgeRetriever) searchBM25(ctx context.Context, query string, limit int) ([]recallCandidate, error) {
 	started := time.Now()
 	_, span := r.tracer.Start(ctx, "rag.recall.bm25", trace.WithAttributes(attribute.Int("rag.candidate_limit", limit)))
 	defer span.End()
 	should := []interface{}{
+		//多字段文字匹配
 		map[string]interface{}{"multi_match": map[string]interface{}{"query": query, "fields": []string{"title^3", "section_path^3", "content", "tags^2"}, "type": "best_fields"}},
+		//多字段短语匹配
 		map[string]interface{}{"multi_match": map[string]interface{}{"query": query, "fields": []string{"title^5", "content^2"}, "type": "phrase", "boost": 3}},
 	}
 	for _, identifier := range exactIdentifiers(query) {
@@ -307,6 +312,7 @@ func (r *KnowledgeRetriever) searchBM25(ctx context.Context, query string, limit
 	esQuery := map[string]interface{}{"size": limit, "query": map[string]interface{}{"bool": map[string]interface{}{"should": should, "minimum_should_match": 1, "must_not": []interface{}{map[string]interface{}{"term": map[string]interface{}{"record_type": "section"}}}}}}
 	hits, err := r.es.SearchHits(ctx, r.indexName, esQuery)
 	if err != nil {
+		//记录并返回错误
 		observeRAG("recall", "bm25", started, err, 0)
 		return nil, fmt.Errorf("BM25 search failed: %w", err)
 	}
@@ -508,7 +514,8 @@ func diversifyChunks(candidates []RetrievedDocument, limit, maxPerDoc int) []Ret
 	result := make([]RetrievedDocument, 0, minInt(limit, len(candidates)))
 	counts := make(map[string]int)
 	seenSections := make(map[string]bool)
-	for _, candidate := range candidates {
+	selected := make(map[int]bool)
+	for i, candidate := range candidates {
 		if candidate.Document.SectionID != "" && seenSections[candidate.Document.SectionID] {
 			continue
 		}
@@ -524,8 +531,17 @@ func diversifyChunks(candidates []RetrievedDocument, limit, maxPerDoc int) []Ret
 			seenSections[candidate.Document.SectionID] = true
 		}
 		result = append(result, candidate)
+		selected[i] = true
 		if limit > 0 && len(result) == limit {
 			break
+		}
+	}
+	// FinalTopK/per-document limits count output sections (or legacy chunks),
+	// not anchors. Keep every ranked hit of selected sections for expansion.
+	result = result[:0]
+	for i, candidate := range candidates {
+		if selected[i] || candidate.Document.SectionID != "" && seenSections[candidate.Document.SectionID] {
+			result = append(result, candidate)
 		}
 	}
 	return result
