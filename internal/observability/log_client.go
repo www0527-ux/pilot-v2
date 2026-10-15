@@ -80,11 +80,15 @@ func (lc *LogClient) QueryLogs(ctx context.Context, service, level, keyword stri
 			},
 		},
 	}
+	//存在条件则追加查询要求
 	if strings.TrimSpace(service) != "" {
 		mustQuery = append(mustQuery, map[string]interface{}{
+			//bool：把多个查询条件按逻辑关系组合起来
+			//should候选条件，至少满足几个由 minimum_should_match 控制
 			"bool": map[string]interface{}{
 				"should": []interface{}{
 					map[string]interface{}{
+						//term：精确匹配，keyword字段是ES的关键字类型，适合做精确匹配
 						"term": map[string]interface{}{
 							"service.keyword": service,
 						},
@@ -118,11 +122,12 @@ func (lc *LogClient) QueryLogs(ctx context.Context, service, level, keyword stri
 			},
 		})
 	}
+	// 非空关键词参与多字段匹配
 	if strings.TrimSpace(keyword) != "" {
 		mustQuery = append(mustQuery, map[string]interface{}{
 			"multi_match": map[string]interface{}{
 				"query":  keyword,
-				"fields": []string{"message^3", "service^2", "trace_id"},
+				"fields": []string{"message", "service", "trace_id"},
 				"type":   "best_fields",
 			},
 		})

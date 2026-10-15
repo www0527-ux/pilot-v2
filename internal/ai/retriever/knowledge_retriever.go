@@ -257,6 +257,7 @@ func (r *KnowledgeRetriever) recall(ctx context.Context, query string) ([]Retrie
 			bm25Result <- recallSearchResult{candidates: items, err: searchErr}
 		}()
 	}
+	//向量化query
 	queryVector, vectorErr := r.embedder.Embed(searchCtx, query)
 	var vector []recallCandidate
 	if vectorErr == nil {
@@ -271,6 +272,7 @@ func (r *KnowledgeRetriever) recall(ctx context.Context, query string) ([]Retrie
 	bm25 := <-bm25Result
 	if vectorErr != nil {
 		if bm25.err == nil && cfg.FallbackToBM25 {
+			//降级单路检索
 			slog.WarnContext(ctx, "vector recall unavailable; using BM25 fallback", "error", vectorErr)
 			observeRAGFallback("vector_to_bm25")
 			return markDegraded(singleRouteResults(bm25.candidates, recallModeBM25, poolLimit), "vector", vectorErr), nil
@@ -286,6 +288,8 @@ func (r *KnowledgeRetriever) recall(ctx context.Context, query string) ([]Retrie
 		return nil, fmt.Errorf("BM25 recall failed: %w", bm25.err)
 	}
 	started := time.Now()
+	//融合两路结果
+	//RRFK排名贡献的平滑参数，项目默认是 60
 	fused := fuseRRF(bm25.candidates, vector, cfg.RRFK, poolLimit)
 	observeRAG("rrf", "hybrid", started, nil, len(fused))
 	return fused, nil
@@ -339,6 +343,13 @@ func (r *KnowledgeRetriever) searchVector(ctx context.Context, vector []float64,
 	return candidates, nil
 }
 
+// /////////
+// SearchHit
+// ├─ ID       → 缺少 ChunkID 时用于兜底
+// ├─ Score    → recallCandidate.score
+// └─ Source   → recallCandidate.document（KnowledgeDocument）
+//
+// transfer hits to candidates, ensuring that chunk_id and doc_id are set
 func (r *KnowledgeRetriever) convertHitsToCandidates(hits []elasticsearch.SearchHit) []recallCandidate {
 	candidates := make([]recallCandidate, 0, len(hits))
 	for _, hit := range hits {

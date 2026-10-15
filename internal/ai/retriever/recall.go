@@ -81,6 +81,7 @@ func fuseRRF(bm25, vector []recallCandidate, rrfK, limit int) []RetrievedDocumen
 	byDocument := make(map[string]*fused, len(bm25)+len(vector))
 	add := func(candidates []recallCandidate, method string) {
 		for rank, candidate := range candidates {
+			//生成key，优先是chunkID
 			identity := candidateIdentity(candidate.document)
 			entry, exists := byDocument[identity]
 			if !exists {

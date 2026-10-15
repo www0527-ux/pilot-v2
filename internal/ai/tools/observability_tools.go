@@ -219,6 +219,7 @@ func NewQueryLogsTool(source LogsSource) (tool.InvokableTool, error) {
 			keyword := ""
 			durationMinutes := 30
 			limit := 20
+			//返回日志文本的字符预算
 			outputRuneBudget := observability.DefaultLogOutputRunes
 			if input != nil {
 				var err error

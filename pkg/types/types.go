@@ -54,12 +54,12 @@ type TraceLog struct {
 
 // KnowledgeDocument 知识库文档
 type KnowledgeDocument struct {
-	ID              string            `json:"id"` // backward-compatible alias of DocID
+	ID              string            `json:"id"` // DocID的旧名
 	DocID           string            `json:"doc_id"`
 	ChunkID         string            `json:"chunk_id"`
 	ChunkIndex      int               `json:"chunk_index"`
 	ChunkCount      int               `json:"chunk_count"`
-	SectionID       string            `json:"section_id,omitempty"`
+	SectionID       string            `json:"section_id,omitempty"` //章节归属的标识
 	SectionPath     string            `json:"section_path,omitempty"`
 	RecordType      string            `json:"record_type,omitempty"`
 	SplitterVersion string            `json:"splitter_version,omitempty"`
