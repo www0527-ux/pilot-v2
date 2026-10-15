@@ -329,10 +329,30 @@ func (r *KnowledgeRetriever) searchVector(ctx context.Context, vector []float64,
 	started := time.Now()
 	_, span := r.tracer.Start(ctx, "rag.recall.vector", trace.WithAttributes(attribute.Int("rag.candidate_limit", limit)))
 	defer span.End()
-	esQuery := map[string]interface{}{"size": limit, "query": map[string]interface{}{"script_score": map[string]interface{}{
-		"query":  map[string]interface{}{"exists": map[string]interface{}{"field": "vector"}},
-		"script": map[string]interface{}{"source": "cosineSimilarity(params.query_vector, 'vector') + 1.0", "params": map[string]interface{}{"query_vector": vector}},
-	}}}
+	// ES 8.12 requires k < num_candidates <= 10000. Reject unsupported limits
+	// rather than silently reducing the configured recall pool.
+	if limit < 1 || limit >= 10000 {
+		err := fmt.Errorf("vector recall limit must be in [1,9999], got %d", limit)
+		observeRAG("recall", "vector", started, err, 0)
+		return nil, err
+	}
+	// Search the indexed HNSW graph instead of scoring every stored vector.
+	// This bounded heuristic is a starting point, not a measured optimum.
+	numCandidates := minInt(10000, maxInt(100, limit*10))
+	esQuery := map[string]interface{}{
+		"size": limit,
+		"knn": map[string]interface{}{
+			"field": "vector", "query_vector": vector,
+			"k": limit, "num_candidates": numCandidates,
+			// Native cosine kNN scores are (1+cosine)/2. Preserve the former
+			// script's 1+cosine scale for vector-only lexical reranking.
+			"boost": 2.0,
+			"filter": map[string]interface{}{"bool": map[string]interface{}{
+				"filter":   []interface{}{map[string]interface{}{"exists": map[string]interface{}{"field": "vector"}}},
+				"must_not": []interface{}{map[string]interface{}{"term": map[string]interface{}{"record_type": "section"}}},
+			}},
+		},
+	}
 	hits, err := r.es.SearchHits(ctx, r.indexName, esQuery)
 	if err != nil {
 		observeRAG("recall", "vector", started, err, 0)

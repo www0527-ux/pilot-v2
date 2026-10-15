@@ -24,7 +24,26 @@ ES 负责全文关键词、精确标识符和向量检索；Eino 提供文档转
 
 每个真实顶层标题划分一个章节，保存其标题层级路径。章节里的相邻短块在目标大小内合并；过长普通段落使用 Eino 递归切分。代码、列表、管道表格保持完整，单个结构块最多 8000 rune，超过时明确要求拆成多个块，不静默破坏结构。800 rune 是普通块的目标，不是所有结构块的硬上限。
 
-子片段携带 `section_id`、`section_path`、`splitter_version` 和原文 rune 范围。向量输入包含章节路径和片段正文。原文范围不包含人为补入的路径。父章节以 `record_type=section` 保存，未生成向量；BM25 显式排除父记录，向量检索只查询存在向量的记录。
+子片段携带 `section_id`、`section_path`、`splitter_version` 和原文 rune 范围。向量输入包含章节路径和片段正文。原文范围不包含人为补入的路径。父章节以 `record_type=section` 保存，未生成向量；BM25 显式排除父记录，向量检索在 kNN 预过滤中要求存在向量并排除父记录。未保存 `record_type` 的旧向量片段仍可参与。
+
+## HNSW 向量召回
+
+`searchVector()` 使用 ES 8.12 的顶层 `knn` 查询，替代原来 `script_score + cosineSimilarity` 对所有匹配向量的逐条评分。现有 `dense_vector` 映射已经配置 `index=true` 和 `similarity=cosine`，ES 8.12 默认由 Lucene 构建和维护 HNSW；项目不自行实现图算法。
+
+- `size=k=limit`：沿用向量路已有的召回数量，即 `max(vector_top_k, poolLimit)`，不是最终传给 Agent 的章节数量。默认配置下为 15。
+- `num_candidates=min(10000,max(100,10*k))`：每分片候选数量，默认配置下为 150；这是起始启发式，没有经过业务数据集调优。它不是相似度计算次数上限，也不是最终结果条数。
+- ES 8.12 要求 `k < num_candidates <= 10000`；项目在调用 ES 前拒绝不在 `[1,9999]` 的向量召回数量，不静默缩小配置。
+- `knn.filter` 在近邻检索期间排除 section，不采用可能导致最终不足 k 条的事后过滤。
+- 原脚本分数为 `1+cosine`；原生 cosine kNN 分数为 `(1+cosine)/2`，所以配置 `boost=2.0` 保持旧分数尺度，避免同时改变纯向量模式下词法重排的相对权重。RRF 仍按两路排名融合。
+- 查询失败继续沿用已有策略：hybrid 下 BM25 成功且允许 fallback 时降级；vector 单路或关闭 fallback 时返回错误。不额外静默退回全量脚本扫描。
+
+HNSW 将向量组织成分层邻接图，上层快速定位大致区域，底层维护候选并细化搜索；通常减少查询时的向量比较，但近似搜索可能漏掉真实最近邻。建图、维护和内存占用也有成本。ES 在少量过滤结果等情况下可能自行选择暴力搜索，因此不能承诺每次都只走图或固定比较次数。
+
+面试可以这样说明：原实现的精确向量召回需要比较所有符合条件的 chunk；这次复用 ES 已提供的 HNSW 索引，用候选搜索换取更低的潜在查询成本，保留 Embedding、RRF、重排、章节扩展和错误降级。项目实现的是检索策略与参数接入，图算法由 ES/Lucene 提供。不能在没有测试数据时声称延迟降低了某个比例或召回率保持不变。
+
+上线前先读取实际索引的 `GET /<knowledge_index>/_mapping`，确认向量维度、`index=true`、cosine 和 HNSW 索引类型；代码中的 Mapping 不能证明现有索引状态。已符合的索引通常无需重新上传，不符合时按 `RAG_MIGRATION.md` 创建版本化索引并重新入库。在相同向量、同一数据快照和问题集上，将旧脚本结果作为向量近邻基线，对比 kNN 的 Recall@k、ES `took` 和客户端 p50/p95 延迟，再调候选数。近邻 Recall@k 不等于业务相关性，需要同时检查命中章节与答案依据。
+
+依据：[ES 8.12 kNN](https://www.elastic.co/guide/en/elasticsearch/reference/8.12/knn-search.html)、[dense_vector](https://www.elastic.co/guide/en/elasticsearch/reference/8.12/dense-vector.html)、[Search API 参数](https://www.elastic.co/guide/en/elasticsearch/reference/8.12/search-search.html)。单元测试验证查询契约、结果转换、空结果、参数边界、错误与 BM25 降级，不等于已经完成真实 ES 性能验证。
 
 ## 检索和返回
 
