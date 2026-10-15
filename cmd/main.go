@@ -152,10 +152,6 @@ func main() {
 	if err != nil {
 		fatal("create experience search tool failed", err)
 	}
-	organizeTool, err := knowledge.NewOrganizeTool(experiences)
-	if err != nil {
-		fatal("create experience organize tool failed", err)
-	}
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); knowledge.NewWorker(experiences, curator).Run(workerCtx) }()
@@ -168,7 +164,7 @@ func main() {
 		KnowledgeRetriever: knowledgeRetriever,
 		MaxIterations:      cfg.Agent.MaxIterations,
 		SessionContext:     memory.NewSessionContextManager(db),
-		ExtraTools:         []tool.BaseTool{experienceTool, organizeTool},
+		ExtraTools:         []tool.BaseTool{experienceTool},
 		ContextTokens:      cfg.Agent.ContextTokens,
 		StaticContext:      "configured service=" + cfg.Observability.ServiceName + "; dependencies=Redis, MySQL, Elasticsearch, Prometheus, Jaeger, LLM; static configuration is not runtime evidence",
 	})

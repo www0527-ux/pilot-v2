@@ -188,6 +188,52 @@ func TestInterleavedIssuesIncrementalAndVersionedKnowledge(t *testing.T) {
 	}
 }
 
+func TestManualSessionOrganizationWorksWithoutAutomaticDrafts(t *testing.T) {
+	ctx := context.Background()
+	s := testService(t)
+	enableIssues(t, s)
+	if _, err := s.SetAutomatic(ctx, "owner", false); err != nil {
+		t.Fatal(err)
+	}
+	g := &issueTestGenerator{}
+	w := NewWorker(s, g)
+	r := issueRun(t, s, "manual-session", "MySQL连接超时，尚未解决", "mysql_logs")
+	if err := s.MaybeEnqueue(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	process := func() {
+		t.Helper()
+		// Make queue readiness independent of the database clock's precision.
+		if err := s.db.Model(&Job{}).Where("owner_id = ? AND run_id = ?", "owner", r.ID).Update("next_attempt_at", time.Now().Add(-time.Second)).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := w.ProcessOne(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	process()
+	job, err := s.GetJob(ctx, "owner", r.ID)
+	if err != nil || !job.Tracked || job.Manual || g.tracks != 1 || g.generates != 0 {
+		t.Fatalf("automatic-disabled path must only track: job=%+v tracks=%d generates=%d err=%v", job, g.tracks, g.generates, err)
+	}
+	// This is the service entry used by the page's organize/close endpoints.
+	if _, err := s.FinalizeSession(ctx, "owner", r.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	process()
+	drafts, err := s.List(ctx, "owner", Filter{Tab: "pending"})
+	if err != nil || len(drafts.Items) != 1 || drafts.Items[0].Entry.PublishedVersion != 0 || g.tracks != 1 || g.generates != 1 {
+		t.Fatalf("manual entry must produce one unpublished draft without retracking: drafts=%+v tracks=%d generates=%d err=%v", drafts, g.tracks, g.generates, err)
+	}
+	if _, err := s.FinalizeSession(ctx, "owner", r.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	process()
+	if g.generates != 1 {
+		t.Fatal("repeating the page action regenerated an already organized Issue")
+	}
+}
+
 func TestKnowledgeFailurePreservesTrackingAndRetryDoesNotReattribute(t *testing.T) {
 	ctx := context.Background()
 	s := testService(t)

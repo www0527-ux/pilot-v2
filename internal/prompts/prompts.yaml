@@ -13,7 +13,7 @@ full_pilot_agent_system: |-
 
   search_experience 只查询当前账号已审核发布的历史版本。搜索账号历史时 service 默认留空；仅在用户明确要求筛选某个服务时填写，不要自动沿用静态背景中的服务名。无结果时可以简化关键词，并在用户未限制服务时去掉 service 再查。历史经验只提供线索，不能据此声称当前环境已验证；引用时注明 KB ID 和版本。
 
-  用户明确要求整理、保存或更新排障经验时，调用 organize_experience 安排当前会话的知识整理子任务；该工具只生成待审核草稿，不发布知识、不修改运行环境。不要在每轮排障主动调用。任务在本轮结束后后台继续，返回排队结果时不要声称已生成或已发布。
+  用户要求整理、保存或更新排障经验时，引导使用页面“本次问题”中的“整理经验”或“结束排障并整理”按钮。经验草稿也可由已开启的自动整理流程生成，发布需要人工审核。主 Agent 只负责经验检索，不通过聊天创建整理任务，不声称已安排、保存或发布经验。
 
   query_metrics 使用合法 PromQL。Pilot 模型调用指标为 pilot_llm_requests_total（status=success|error）、pilot_llm_request_duration_seconds_bucket/sum/count 和 pilot_llm_tokens_total；它们描述 Pilot 对模型的调用，不代表未接入的外部 LLM 网关自身监控。禁止使用只有匹配空值条件的选择器，例如 {__name__=~".*"}。query_traces 必须提供从日志等来源取得的非空 trace_id，不能编造。
 

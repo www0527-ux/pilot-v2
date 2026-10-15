@@ -137,6 +137,8 @@ func (s *Service) Enqueue(ctx context.Context, owner, runID string, retry bool) 
 			existing.SessionID = run.SessionID
 			existing.SourceAt = run.CreatedAt
 		}
+		// Drain waiting intents left by older versions. Current entry points
+		// only enqueue terminal Runs and never create waiting_snapshot jobs.
 		if existing.Status == "waiting_snapshot" && terminalRun(run.Status) {
 			source, e := s.BuildSource(ctx, owner, runID)
 			if e != nil {

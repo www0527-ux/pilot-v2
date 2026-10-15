@@ -125,10 +125,23 @@ def main():
         assert enriched['version']['review_status']=='pending'
         assert '人工补充' in enriched['version']['conditions'],'automatic proposal overwrote human edit'
         assert get('/api/v1/experiences?tab=all')['total']==2
-        organize_run,organized=send('请调用 organize_experience 将当前会话尚未整理的经验安排进知识库草稿，不自动发布。如果已无新内容就不重复新增。',reuse=True)
-        organize_record=next(r for r in get('/api/v1/chat/runs?session_id='+page.locator('#sessionId').input_value()) if r['id']==organize_run)
-        assert any(e['kind']=='tool' and e.get('name')=='organize_experience' and e['status']=='completed' for e in organize_record['events']),organize_record['events']
+        # Manual organization is a page action, not another Main Agent turn.
+        manual_session=page.locator('#sessionId').input_value()
+        before_runs={r['id'] for r in get('/api/v1/chat/runs?session_id='+manual_session)}
+        page.locator('#sessionIssues').evaluate('e=>e.open=true')
+        with page.expect_response(lambda r:r.request.method=='POST' and r.url.endswith('/sessions/'+manual_session+'/organize')) as queued:
+            page.locator('#issuesOrganize').click()
+        assert queued.value.ok,queued.value.text()
+        for _ in range(110):
+            organized=get('/api/v1/experiences/jobs/'+enrich_run)
+            if organized['status'] in ('succeeded','no_draft','failed'):
+                assert organized['status']!='failed',organized
+                break
+            time.sleep(2)
+        else:raise AssertionError('manual issue organization timed out')
         assert organized['manual'] and organized['tracked']
+        assert {r['id'] for r in get('/api/v1/chat/runs?session_id='+manual_session)}==before_runs,'page action started a Main Agent turn'
+        assert get('/api/v1/experiences?tab=all')['total']==2,'manual organization duplicated knowledge'
         # Refresh restores persisted Issue memory and review state.
         page.locator('#sessionId').fill(session);page.locator('#sessionId').dispatch_event('change');page.reload(wait_until='networkidle')
         page.locator('#sessionId').fill(session);page.locator('#sessionId').dispatch_event('change');page.locator('#sessionIssues').evaluate('e=>e.open=true')
@@ -141,7 +154,7 @@ def main():
         assert other.request.get(BASE+'/api/v1/experiences/'+original['entry']['id']).status==404
         assert other.request.get(BASE+'/api/v1/experiences/issues?session_id='+session).json()['data']==[]
         other.close();assert not errors,errors
-        (OUT/'result.json').write_text(json.dumps({'runs':[a,b,c,d,linked_run,enrich_run,organize_run],'session':session,'issues':[i['id'] for i in issues],'entries':[x['entry']['id'] for x in drafts],'checks':['real_model_sse','interleaved_issues','incremental_summary','auto_drafts','drawer_review_publish','failed_save_preserved','published_version_retrieval','similar_case_link','enrich_pending_version','human_edit_preserved','main_agent_organize_tool','reload','mobile','owner_isolation']},ensure_ascii=False,indent=2),encoding='utf8')
+        (OUT/'result.json').write_text(json.dumps({'runs':[a,b,c,d,linked_run,enrich_run],'session':session,'issues':[i['id'] for i in issues],'entries':[x['entry']['id'] for x in drafts],'checks':['real_model_sse','interleaved_issues','incremental_summary','auto_drafts','drawer_review_publish','failed_save_preserved','published_version_retrieval','similar_case_link','enrich_pending_version','human_edit_preserved','manual_organize_button','reload','mobile','owner_isolation']},ensure_ascii=False,indent=2),encoding='utf8')
         context.storage_state(path=str(OUT/'browser-state.json'))
         browser.close();print('Issue experience browser checks passed',flush=True)
 

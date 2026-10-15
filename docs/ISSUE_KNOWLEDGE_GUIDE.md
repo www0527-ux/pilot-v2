@@ -10,7 +10,7 @@ flowchart LR
   B --> C[本轮事件 + 已有问题摘要]
   C --> D[模型判断问题归属]
   D --> E[校验覆盖 / 提交 Issue Memory]
-  E --> F{确认解决或主动整理?}
+  E --> F{开启自动且确认解决<br/>或页面手动整理?}
   F -->|否| G[保留进度继续排障]
   F -->|是| H[Knowledge Agent 按问题读取来源与相关知识]
   H --> I[CREATE / LINK / ENRICH / NOOP]
@@ -41,7 +41,7 @@ flowchart LR
 6. 知识阶段按 Issue 读取相关原始来源，每个问题的决策及 OrganizedRevision 独立事务提交。某个问题提炼失败，其他已完成问题保留；重试不重复处理成功阶段。
 7. 租约与提交 Token 防止过期 Worker 写入。任务最多自动重试三次，失败可以手动重试；较早跟踪任务永久失败时，后续同会话跟踪等待修复，避免静默跳过。
 
-主 Agent 的 `organize_experience` 工具只安排绑定当前账号、当前会话的子任务。当前 Run 尚未结束时保存 waiting_snapshot 意图，终态后再生成不可变来源，不拿半截答案做知识。它返回排队结果，不返回“已经发布”。
+主 Agent 只检索经验，不发起整理。手动入口是页面“整理经验”或“结束排障并整理”按钮，直接调用绑定当前账号、当前会话的后端接口，为已结束的 Run 排队。自动入口是在 Run 结束后的后台问题跟踪中，检查自动整理开关、解决状态和未整理版本。两种入口共用按 Issue 聚合跨 Run 来源的 Worker，生成的内容仍需人工审核发布。
 
 整理子 Agent 通过 `get_source_record` 分页读来源，必要时检索经验，最后调用 `submit_knowledge` 提交结构化决策。提交工具校验字段和引用，采用 ADK ReturnDirectly 结束本轮；它不写数据库，也没有审核或发布权限。知识服务仍在事务内再次校验目标版本与问题版本，避免模型生成期间的人工修改被覆盖。候选的枚举约束也出现在工具 schema 中，避免模型把说明文字误当成字段值。
 
@@ -70,7 +70,7 @@ flowchart LR
 | 2 | `internal/knowledge/worker.go` | 入队、按先后领取、租约、重试、恢复 |
 | 3 | `internal/knowledge/issue_worker.go` | 跟踪与知识两阶段、按问题来源、决策提交 |
 | 4 | `internal/knowledge/issues.go` | Issue Memory、事件覆盖、归属、版本栅栏 |
-| 5 | `internal/knowledge/issue_agent.go` | 增量提示词、四种决策、主 Agent 触发工具 |
+| 5 | `internal/knowledge/issue_agent.go` | 增量问题跟踪提示词、四种知识决策协议 |
 | 6 | `internal/knowledge/agent.go` | ADK 子 Agent、来源分页、检索 |
 | 7 | `internal/knowledge/issue_edits.go` | 人工合并、拆分、移动与未归属事件修正 |
 | 8 | `internal/knowledge/service.go` | 审核、版本、发布检索 |

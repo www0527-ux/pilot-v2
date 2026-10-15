@@ -22,7 +22,7 @@ flowchart TD
     SSE --> End[Run 持久化终态]
     End --> Tracker[新增事件 + 已有 Issue 摘要]
     Tracker --> Memory[问题记忆 / 事件归属 / 处理进度]
-    Memory --> Trigger[问题确认解决 / 用户主动整理]
+    Memory --> Trigger[开启自动且确认解决 / 页面手动整理]
     Trigger --> Job[SQL Job / 独立 Worker]
     Job --> Curator[ADK KnowledgeCurator]
     Curator --> Draft[结构校验 + 来源校验 + 草稿入库]
@@ -67,7 +67,7 @@ flowchart TD
 
 ## 3. 经验任务与知识整理 Agent
 
-Run 结束回调创建 SQL 任务，不同步调用整理模型。Worker 每 2 秒领取任务，每 20 秒补查漏掉的终态 Run；启用时间持久化，重启不会丢掉漏扫范围。每次只输入本轮消息和工具结果、已有 Issue 摘要以及有限的未归属事件。问题确认解决后自动提炼草稿，新设备默认开启，已有设备保留原设置。按钮、会话结束和主 Agent 的 organize_experience 工具也可以主动触发。
+Run 结束回调创建 SQL 任务，不同步调用整理模型。Worker 每 2 秒领取任务，每 20 秒补查漏掉的终态 Run；启用时间持久化，重启不会丢掉漏扫范围。每次只输入本轮消息和工具结果、已有 Issue 摘要以及有限的未归属事件。开启自动整理时，问题确认解决后自动提炼草稿，新设备默认开启，已有设备保留原设置。用户也可通过页面“整理经验”或“结束排障并整理”按钮直接调用后端接口。主 Agent 只提供经验检索，不创建经验整理任务；聊天中的整理请求引导用户操作页面。
 
 任务唯一键 `(owner_id, run_id)`，关联唯一键 `(owner_id, issue_id, event_id)`。Issue 跟踪先提交并标记 tracked，再逐个生成知识；失败重试不会再次处理已归属的事件或已整理的问题版本。失败最多尝试 3 次，可手动重试。执行超时 2 分钟，租约 3 分钟，领取与提交均校验租约 Token。关闭自动草稿开关不会关闭 Issue 增量跟踪。
 

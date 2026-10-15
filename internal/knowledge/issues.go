@@ -346,19 +346,3 @@ func (s *Service) FinalizeSession(ctx context.Context, owner, session string) ([
 	err = s.db.WithContext(ctx).Model(&ledger).Where("owner_id = ? AND session_id = ?", owner, session).Update("closed_at", now).Error
 	return jobs, err
 }
-
-func (s *Service) requestCurrentRun(ctx context.Context, owner, session, runID string) error {
-	var count int64
-	if err := s.db.WithContext(ctx).Table("agent_runs").Where("id = ? AND user_id = ? AND session_id = ?", runID, owner, session).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	var r struct{ CreatedAt time.Time }
-	if err := s.db.WithContext(ctx).Table("agent_runs").Select("created_at").Where("id = ? AND user_id = ?", runID, owner).First(&r).Error; err != nil {
-		return err
-	}
-	j := Job{ID: uuid.NewString(), OwnerID: owner, RunID: runID, SessionID: session, SourceAt: r.CreatedAt, Manual: true, Status: "waiting_snapshot", NextAttemptAt: time.Now()}
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&j).Error
-}
