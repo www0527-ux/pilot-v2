@@ -8,7 +8,7 @@ An AI-powered troubleshooting workspace.
 
 基于 Go 与 Eino ADK 的智能排障工作台。检索日志、指标、调用链和技术指南，将多轮故障排查整理为可审核、可复用的经验。
 
-[功能概览](#features) · [快速开始](#quick-start) · [技术细节](#under-the-hood) · [开发文档](#documentation)
+[功能概览](#features) · [产品演示](#demo) · [快速开始](#quick-start) · [技术细节](#under-the-hood) · [开发文档](#documentation)
 
 <sub>Go · Eino ADK · Elasticsearch · Prometheus · Jaeger · MySQL</sub>
 
@@ -39,7 +39,33 @@ Pilot 是一个面向开发者的本地排障工作台。
 
 查看 Agent 执行进度，取消任务，或在 SSE 连接断开后按事件序号续接。原始历史和模型工作上下文分别保存，长会话按容量进行摘要。
 
-> 产品截图及演示素材后续由作者补充。这里不使用模拟运行画面。
+<a id="demo"></a>
+## Product demo
+
+下面来自本地“下游接口响应缓慢”演示：真实 HTTP 请求产生 Elasticsearch 日志、Prometheus 指标和 Jaeger Trace，Agent 通过工具读取证据。场景可重复注入、恢复；截图不是生产事故记录。
+
+**查看调查过程与工具参数**：从服务响应变慢的问题开始，展开日志、指标和链路调查步骤，查看实际 `query_traces` 调用及 Trace ID。
+
+![Pilot 调查过程与真实链路工具调用](docs/images/demo/01-agent-investigation.png)
+
+**重新查询，确认当前状态**：恢复后，Agent 重新获取日志、P95 和 Trace，引用实际请求 ID，并说明仍未验证的范围。
+
+![Pilot 恢复后的证据与诊断结果](docs/images/demo/04-agent-recovery.png)
+
+<details>
+<summary>展开查看 Prometheus 趋势与 Jaeger 原始链路证据</summary>
+
+P95 从约 **49 ms → 1.74 s → 49 ms**；这是直方图估算值，单次请求实测约 **41 ms → 1.5 s → 41 ms**。两服务曲线基本重合，图中时间为 UTC。
+
+![Prometheus 正常、变慢与恢复的延迟趋势](docs/images/demo/02-latency-metrics.png)
+
+与 Agent 工具调用相同的慢请求 `d4b9b3a9ee0e59d4b942babf38466ad3`：网关 Server → HTTP Client → inventory Server，三个 Span 展示真实父子关系，不能将嵌套耗时相加。
+
+![Jaeger 慢请求父子 Span 与下游处理耗时](docs/images/demo/03-slow-request-trace.png)
+
+</details>
+
+[截图说明与验收边界](docs/product-demo.md) · [启动、故障注入与验证步骤](docs/observability-demo.md)
 
 <a id="quick-start"></a>
 ## Quick start
@@ -152,6 +178,8 @@ Go 存储测试使用 SQLite，需要 **`CGO_ENABLED=1` 和 C 编译器**；前�
 - [知识召回与章节补全代码复盘](docs/knowledge-retrieval-flow.md)
 - [索引迁移](docs/RAG_MIGRATION.md)
 - [对话与经验审核界面](docs/UI_WORKSPACE_GUIDE.md)
+- [真实 HTTP 慢下游演示与 Agent 证据验收](docs/observability-demo.md)
+- [产品截图、观测证据与演示结果](docs/product-demo.md)
 
 [旧架构说明](docs/LEGACY_ARCHITECTURE.md)、ADK Spike、证据图和早期验收报告属于历史参考。部分旧文档及验证脚本仍描述已移除的多 Agent HTTP 路径，当前路由以 [cmd/main.go](cmd/main.go) 为准。
 

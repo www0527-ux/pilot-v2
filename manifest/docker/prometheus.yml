@@ -18,3 +18,13 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ['pilot:8080']
+  # Optional real-request demo. Its metrics use pilot_demo_* to keep existing
+  # Pilot alerts/dashboards separate. These targets are down when not started.
+  - job_name: 'pilot-slow-demo'
+    static_configs:
+      - targets: ['host.docker.internal:18091']
+        labels:
+          service: pilot-demo-gateway
+      - targets: ['host.docker.internal:18092']
+        labels:
+          service: pilot-demo-inventory
