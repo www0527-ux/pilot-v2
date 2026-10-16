@@ -15,9 +15,22 @@ artifacts/
 node_modules/
 __pycache__/
 *.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.exe
 *.test
 coverage.out
+/build/
+/coverage/
+coverage*.out
+*.coverprofile
+*.prof
+*.pprof
+*.pid
+*.pid.lock
 
 # Local credentials and persisted application data
 *.cookies
@@ -27,8 +40,23 @@ coverage.out
 *.db-*
 *.sqlite
 *.sqlite3
+*.sqlite-*
+*.sqlite3-*
 /data/
 /uploads/
+
+# Local overrides; keep the default, Docker, and example configurations tracked.
+/manifest/config/config.local.yaml
+/manifest/config/config.local.yml
+/manifest/config/*.local.yaml
+/manifest/config/*.local.yml
+/manifest/docker/docker-compose.local.yaml
+/manifest/docker/docker-compose.local.yml
+
+# Editor temporary files
+*.swp
+*.swo
+*~
 
 # Learning exercises and macOS archive metadata
 /practice/

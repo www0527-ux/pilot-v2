@@ -1,103 +1,143 @@
 # Pilot
 
-Pilot 是用 Go、Gin 和 Eino v0.9.13 构建的排障助手。当前主链路使用 **ADK ChatModelAgent** 自主选择只读工具，查询 Prometheus、Elasticsearch 和 Jaeger，最后流式输出结论、依据与限制。独立的知识整理 Agent 将已结束的排障记录转换为账号私有的经验草稿，经过人工审核发布后，可在新会话中检索。
+**基于 Go 与 Eino ADK 的智能排障与经验知识库。**
 
-## 当前能力
+Pilot 将日志、指标、调用链查询与技术文档检索接入排障 Agent，支持多轮分析、流式回答和执行过程查看。排障记录按问题持续跟踪，由独立整理 Agent 生成经验草稿，人工审核发布后供后续会话检索。
 
-- 同步 Chat、SSE Chat；执行过程、工具调用和最终回答分别展示，支持 Run 取消与事件续接。
-- 会话原始历史保存在 MySQL，Redis 缓存用于界面历史；模型工作上下文单独持久化，包括工具调用与结果。
-- 复用 Eino ADK 官方 `summarization` 中间件，按上下文容量触发摘要，保留整个会话脉络、方案取舍及当前请求。压缩不删除原始历史。
-- Run 结束后增量更新问题摘要与证据归属；同会话多个交错问题独立跟踪。开启自动整理时，确认解决后自动生成草稿，也支持页面按钮手动整理。主 Agent 仅检索经验，不发起经验整理。SQL 任务具有幂等、重试、租约与重启恢复。
-- 经验管理中心：筛选、审核抽屉、编辑保存、发布、拒绝、创建修订、归档、查看版本和来源证据。
-- 审核、验证、生命周期分别管理；仅当前账号已发布、已审核通过且未归档的版本供 `search_experience` 检索。
-- 原有 Chunk RAG 作为独立的参考文档库保留：Embedding、BM25、向量召回、RRF 与重排。它不是上述私有经验库。
+项目重点是 Agent 的工程化：如何约束工具、组织检索上下文、管理长任务，以及将多轮排障记录沉淀为可审核的知识。当前定位为个人开发与本地演示项目，未提供生产规模或检索效果提升的量化结论。
 
-技术指南现支持 Markdown 文件上传、按结构切分和 Eino 父子检索补回章节上下文，详见 [Markdown RAG 实现与阅读指南](docs/MARKDOWN_RAG_GUIDE.md)。旧文档继续可检索，重新上传后使用新切分策略。
-- 原有日志/指标/链路查询、跨信号关联、OpenTelemetry 和 Prometheus 监控保留。
+## 核心功能
 
-旧固定多 Agent 排障路径及其 HTTP 入口已从主程序移除；相关包暂保留用于历史回归测试。旧情景记忆不再参与主 Agent 上下文。反馈按钮只记录评价，不触发经验收录。旧实现说明见 [归档文档](docs/LEGACY_ARCHITECTURE.md)，请勿将其路由和验证门禁视为当前 ADK 的能力。
+- **工具调用式排障**：按需查询 Elasticsearch 日志、Prometheus 告警与指标、Jaeger 调用链，并进行跨信号关联分析；执行过程与最终回答分开呈现。
+- **技术文档 RAG**：上传 Markdown 指南，结构感知切分后进行关键词与向量混合检索，补回命中章节的相关上下文。
+- **多轮对话**：原始历史与模型工作上下文分别保存，复用摘要中间件控制上下文增长。
+- **任务生命周期**：持久化 AgentRun 与事件，支持取消、重复请求识别、SSE 断线后的事件回放。
+- **Issue 跟踪与经验沉淀**：一个会话可跟踪多个交错问题，支持人工修正归属、手动整理和解决后自动整理；经验可编辑、审核、修订、归档与恢复发布。
 
-## 本地启动
+## 技术栈
 
-环境要求：Go 1.24.10+、Docker Desktop、模型及 Embedding 服务。数据库表在启动时自动迁移，不需要新增消息队列或向量服务。
+| 分类 | 技术与用途 |
+| --- | --- |
+| 后端与 Agent | Go 1.24.10+、Gin、Eino v0.9.13 ADK、Tool Calling |
+| 数据存储 | MySQL：历史、工作上下文、Run、Issue、任务及经验版本；Redis：界面历史缓存 |
+| 文档检索 | Elasticsearch 8.12：BM25、dense_vector / HNSW kNN；项目实现 RRF 融合、重排与上下文预算 |
+| 可观测性 | Prometheus、Jaeger、OpenTelemetry、Elasticsearch 日志 |
+| 交互与部署 | SSE、原生 JavaScript、Docker Compose |
 
-当前 Windows 开发环境已配置 DeepSeek **Flash** 与本地 Embedding；在 `pilot` 目录运行：
+**两类知识库分别管理：**技术文档库保存在 ES，使用 `search_knowledge` 检索；排障经验库保存在 MySQL，使用 `search_experience` 检索当前账号审核通过的发布版。经验库目前采用关键词及服务过滤，不使用向量召回。
+
+## 核心技术设计
+
+**Agent 与工具约束。** 外层 Graph 依次准备上下文、组装消息并进入 ADK。Eino 提供模型与工具接口、决策循环、事件和摘要中间件；Pilot 实现工具参数校验、查询范围及结果体积限制、账号范围传递与可恢复错误反馈。流式路径在工具调查后另做无工具模型调用，逐步输出最终回答，而非将调查中的每轮文本拼成结论。[主 Agent](internal/ai/agent/full_agent.go) · [工具实现](internal/ai/tools)
+
+**RAG 检索与上下文补全。** 用 Goldmark 识别 Markdown 标题和块边界，保护代码、列表及表格，复用 Eino 递归切分长段落。ES 同时保存子 Chunk 与父章节记录，子 Chunk 用于 BM25 / kNN 召回，再由项目执行 RRF 融合与重排。复用 Eino Parent Retriever 收集父章节 ID，项目负责 ES 读取、多命中窗口合并、章节补全及字符预算，明确标记不完整内容，避免直接把孤立片段当成完整指南。[入库与召回](internal/ai/retriever/knowledge_retriever.go) · [章节扩展](internal/ai/retriever/section_retriever.go)
+
+**AgentRun 与多轮上下文。** Agent 执行 Context 独立于 HTTP 连接，客户端断线不直接取消任务；持久化事件序号供重连回放，`run_id` 用于幂等识别，并提供主动取消。模型工作上下文保留消息、工具调用和摘要，通过会话串行保护、历史游标和 Revision 校验协调保存。摘要机制复用 Eino，持久化与并发控制由项目实现。[Run 管理](internal/controller/chat_runs.go) · [工作上下文](internal/ai/agent/session_context.go)
+
+**Issue 与经验知识管理。** Session 表示会话，Run 表示一次执行，Issue 表示跨轮推进的问题，经验条目是可独立复用的知识。后台按增量记录更新 Issue，使用 MySQL 任务、租约和版本水位协调独立整理 Agent；整理结果经过程序校验后成为待审草稿，人工发布才进入经验检索。修订期间旧发布版继续可用，模型不会直接覆盖已发布知识。[后台任务](internal/knowledge/worker.go) · [Issue 整理](internal/knowledge/issue_worker.go) · [审核与版本](internal/knowledge/service.go)
+
+## 快速启动
+
+以下以 **PowerShell、本机 Go 服务 + Docker 依赖**为例；macOS / Linux 可使用 `cp` 复制配置并运行同样的 Docker 与 Go 命令。所有命令均在仓库根目录执行。
+
+准备 Go 1.24.10+、Docker Compose v2，以及可用的对话模型和 Embedding 服务。默认配置使用 DashScope 的 OpenAI 兼容接口，分别调用 `qwen-plus` 和 `text-embedding-v4`（1024 维）。
+
+### 1. 准备配置
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File artifacts/startup/start.ps1
+Copy-Item .env.example .env
+go mod download
 ```
 
-该本地脚本与运行配置在忽略提交的 `artifacts` 下。首次在其他机器安装，请复制 `.env.example` 为 `.env`，填写所选模型/Embedding 凭据，用 `manifest/docker/docker-compose.yml` 启动依赖，再启动 Go 服务：
+编辑本地 `.env`：填写 `DASHSCOPE_API_KEY`，将 `MYSQL_ROOT_PASSWORD` 改为自己的本地密码。默认 Redis 和 ES 不启用密码，其对应变量保持为空；仅填写客户端密码不会为容器自动启用认证。
+
+默认配置为 [config.yaml](manifest/config/config.yaml)。更换模型供应商时，可将它复制为 `manifest/config/config.local.yaml`，通过环境变量引用凭据，并分别设置对话与 Embedding 服务的地址、模型和向量维度。配置优先级为 `-config`、`PILOT_CONFIG`、默认路径；启动前会加载根目录 `.env`。更换 Embedding 维度需要使用兼容的新索引，见[索引迁移说明](docs/RAG_MIGRATION.md)。
+
+### 2. 启动依赖
+
+现有 Compose **固定使用 ARM64**。Apple Silicon / ARM64 环境可直接执行；AMD64 环境请使用下方覆盖配置，或自行确认 Docker 已启用 ARM64 模拟。
 
 ```powershell
-docker compose --env-file .env -f manifest/docker/docker-compose.yml up -d
+docker compose --env-file .env -f manifest/docker/docker-compose.yml up -d --wait redis elasticsearch mysql prometheus jaeger grafana
+```
+
+<details>
+<summary>AMD64 / 常见 Windows、Linux x86-64 环境</summary>
+
+将以下内容保存为 `manifest/docker/docker-compose.local.yml`（已忽略提交）：
+
+```yaml
+services:
+  redis: {platform: linux/amd64}
+  elasticsearch: {platform: linux/amd64}
+  mysql: {platform: linux/amd64}
+  prometheus: {platform: linux/amd64}
+  jaeger: {platform: linux/amd64}
+  grafana: {platform: linux/amd64}
+```
+
+然后使用这条命令替代上方启动命令；该覆盖配置仅用于本机运行 Go 服务时的六个依赖：
+
+```powershell
+docker compose --env-file .env -f manifest/docker/docker-compose.yml -f manifest/docker/docker-compose.local.yml up -d --wait redis elasticsearch mysql prometheus jaeger grafana
+```
+
+</details>
+
+### 3. 检查依赖并启动服务
+
+```powershell
+go run ./cmd/checkdeps
 go run ./cmd -config manifest/config/config.yaml
 ```
 
-默认 manifest 使用 DashScope；当前 DeepSeek 开发环境使用 `artifacts/startup/config.deepseek.yaml`，两者不要混用。配置优先级为 `-config`、`PILOT_CONFIG`、默认 manifest；读取配置前加载根目录 `.env`。不要提交密钥。
+自定义配置需同时传递给依赖检查器（通过 `PILOT_CONFIG`）和服务，避免检查与运行使用不同配置。首次启动会自动迁移 MySQL 表并初始化 ES 索引，无需手动建表。
 
-打开 http://localhost:8080/，在“智能对话”完成排障；展开“本次问题”查看、修正归属或整理会话经验。新设备默认开启“确认解决后自动生成草稿”，原设备保存的设置继续生效。草稿可以稍后处理，在知识库管理中心继续审核。
+打开 <http://localhost:8080/>。浏览器会建立设备账号，请固定使用 `localhost` 或 `127.0.0.1` 中的一种地址，以免切换 Cookie 身份。健康检查为 `/api/v1/health/ready`，监控指标为 `/metrics`。
 
-```yaml
-agent:
-  max_iterations: 25
-  context_tokens: 24000
-  timeout: 300
-```
+可先问“检查 pilot-api 最近 30 分钟的错误，区分事实和假设”，观察执行过程及流式回答；再上传自己的 Markdown 技术指南测试 RAG。新环境没有预置专业指南或真实故障数据，查询无结果并不表示服务异常。经验审核可从对话侧边面板或知识库页面进入。
 
-`context_tokens` 使用包含消息及工具 Schema 的保守字符估算，控制压缩触发，并非精确计费 Token 数；小于等于零时主 Agent 使用 24000。摘要输出上限为 1800 Token。
+完整容器运行使用 Compose 的 `app` profile 和 [config.docker.yaml](manifest/config/config.docker.yaml)。仓库中的 `artifacts/startup` 是被忽略的本地环境，不是首次安装的必要依赖。Compose 含开发用口令、关闭认证的依赖及端口映射，仅用于本地演示。
 
-## 账号和数据边界
-
-控制台使用 HttpOnly 随机凭据 Cookie 建立设备账号，后端依据凭据确定所有者，忽略调用方伪造的 `user_id`。同一浏览器刷新、服务重启不会更换账号；`localhost` 与 `127.0.0.1` 的 Cookie 不共享，请固定使用一个地址。
-
-这是本地演示的设备账号方案，没有密码登录、跨设备恢复和组织权限。清除 Cookie 后会获得新账号；旧数据不会自动转移。旧版由用户手填 `user_id` 的历史也不会被自动归属到新账号。
-
-会话、工作上下文和经验存储在本地 MySQL Docker 卷中；模型调用仍会将需要分析的内容发送给当前配置的模型服务。参考文档库沿用原来的共享存储，本次私有隔离针对 Chat 和排障经验。
-
-## API
-
-所有响应沿用项目统一 JSON envelope。Chat 与经验接口要求账号 Cookie；浏览器启动时自动建立会话。CLI 可先保存 Cookie，再调用：
-
-```powershell
-curl.exe -c pilot.cookies -X POST http://localhost:8080/api/v1/account/session
-curl.exe -b pilot.cookies -H 'Content-Type: application/json' -d '{"session_id":"demo","query":"检查 pilot-api 最近的错误"}' http://localhost:8080/api/v1/chat
-```
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| POST | `/api/v1/account/session` | 建立或读取设备账号 |
-| POST | `/api/v1/chat` | 同步回答 |
-| POST | `/api/v1/chat/stream` | 任务事件 SSE 与回答正文 |
-| GET | `/api/v1/chat/runs` | 当前账号会话的执行历史 |
-| GET | `/api/v1/chat/runs/:run_id/events` | 回放/续接执行事件 |
-| POST | `/api/v1/chat/runs/:run_id/cancel` | 取消任务 |
-| GET / DELETE | `/api/v1/chat/history` | 查询/清理当前账号会话 |
-| GET / POST | `/api/v1/experiences/settings` | 自动整理开关 |
-| GET | `/api/v1/experiences/issues?session_id=...` | 当前会话的问题、状态、证据归属与关联经验 |
-| GET | `/api/v1/experiences/unassigned?session_id=...` | 暂时无法归属的事件，展示预算最多 100 项 |
-| POST | `/api/v1/experiences/issues/:issue_id` | `rename/status/merge/split/move/assign`，携带 Revision |
-| POST | `/api/v1/experiences/sessions/:session_id/organize` | 主动整理会话中尚有新增内容的问题 |
-| POST | `/api/v1/experiences/sessions/:session_id/close` | 结束时检查遗漏 Run 并安排整理 |
-| GET / POST | `/api/v1/experiences/jobs/:run_id` | 查询/创建任务，失败后重试 |
-| GET | `/api/v1/experiences` | 筛选列表、分页与分类计数 |
-| GET | `/api/v1/experiences/:entry_id` | 详情，支持 `?version=N` |
-| GET | `/api/v1/experiences/:entry_id/versions` | 历史版本 |
-| POST | `/api/v1/experiences/:entry_id` | `save/publish/reject/revise/archive`，携带 `revision` |
-| GET | `/api/v1/health/ready` | 核心依赖就绪状态 |
-| GET | `/metrics` | Prometheus 指标 |
-
-经验接口的筛选参数包括 `tab/query/service/type/review/verification/from/to/run_id/page`。详情与版本携带不可编辑的来源证据。正文 SSE 使用 `kind=answer,status=delta`，以 `kind=run` 终态和 `[DONE]` 结束；完整基础协议见 [AGENT_CHAT_UI.md](docs/AGENT_CHAT_UI.md)。
-
-## 学习与验证
-
-先读 [ADK 主链路与经验库实现指南](docs/ADK_EXPERIENCE_GUIDE.md)，再依次看 `full_agent.go`、`session_context.go`、`answer_stream.go` 和 `internal/knowledge`。该文档区分了框架职责、业务职责以及当前实现限制。
+## 测试与验证
 
 ```powershell
 go test ./...
 node --test web/app.test.mjs web/agent-session.test.mjs
 ```
 
-存储测试使用 SQLite，需要 `CGO_ENABLED=1` 和 C 编译器；无编译器的 Windows 可使用 Linux 容器执行。当前实际模型与浏览器验收脚本是 `scripts/issue_experience_smoke.py`，需已启动服务及 Python Playwright，会创建独立测试账号并产生模型调用费用。设计动机与增量流程见 [Issue 与知识更新指南](docs/ISSUE_KNOWLEDGE_GUIDE.md)。
+Go 存储测试使用 SQLite，需要 **`CGO_ENABLED=1` 和 C 编译器**；前端测试需要 Node.js。Git Bash / WSL / macOS / Linux 环境还可运行 `make ci`，检查格式、静态分析、构建、race、前端测试及依赖一致性。现有 GitHub Actions 的步骤见 [ci.yml](.github/workflows/ci.yml)，其覆盖范围不等同于完整 `make ci`。
 
-当前实现故障案例 MVP，包括 Issue 增量记忆、相似案例关联及修订提案。向量召回、用户偏好、长期画像、版本差异视图和完整登录系统属于后续迭代。模型的归属与相似判断可能出错，需要界面修正和人工审核。
+| 验证范围 | 现有测试入口 |
+| --- | --- |
+| Markdown 边界、父子入库、混合召回、窗口与预算 | [retriever 测试](internal/ai/retriever)、[工具测试](internal/ai/tools) |
+| ADK 调查与回答分离、摘要及上下文保存 | [agent 测试](internal/ai/agent) |
+| Run 幂等、SSE 回放、取消与持久化 | [chat_runs_test.go](internal/controller/chat_runs_test.go)、[chat_events_test.go](internal/controller/chat_events_test.go) |
+| Issue 归属、增量整理、任务与经验版本 | [knowledge 测试](internal/knowledge) |
+| 账号隔离、历史与工作上下文存储 | [security 测试](internal/security)、[memory 测试](internal/memory) |
+| 前端会话与交互契约 | `web/app.test.mjs`、`web/agent-session.test.mjs` |
+
+这些机制测试不代表真实模型准确率或检索召回率评估。可选的 [Issue 经验验收脚本](scripts/issue_experience_smoke.py) 使用真实服务、模型和数据库，会写入测试数据并产生模型费用；当前脚本依赖 Python Playwright 及 Edge。历史模型验收未完整覆盖最新版，不能视为当前端到端全部通过。可选 Redis Markdown 样例测试在样例不存在时会跳过。
+
+## 技术文档索引
+
+- [ADK 主链路、上下文与经验库](docs/ADK_EXPERIENCE_GUIDE.md)
+- [Issue 跟踪与知识更新](docs/ISSUE_KNOWLEDGE_GUIDE.md)
+- [Markdown 切分与父子检索](docs/MARKDOWN_RAG_GUIDE.md)
+- [知识召回与章节补全代码复盘](docs/knowledge-retrieval-flow.md)
+- [索引迁移](docs/RAG_MIGRATION.md)
+- [对话与经验审核界面](docs/UI_WORKSPACE_GUIDE.md)
+
+[旧架构说明](docs/LEGACY_ARCHITECTURE.md)、ADK Spike、证据图和早期验收报告属于历史参考。部分旧文档及验证脚本仍描述已移除的多 Agent HTTP 路径，当前路由以 [cmd/main.go](cmd/main.go) 为准。
+
+## 当前限制
+
+- **事件回放不是推理恢复。** 客户端重连可以继续接收现有 Run 事件；服务进程重启后，未完成执行会标记失败并保留已有内容，不从 ADK 推理中间状态续跑。知识整理后台任务具有独立的补扫和重试机制。
+- **设备账号不是完整登录系统。** 使用 HttpOnly 随机 Cookie 标识账号，没有密码登录、跨设备恢复和组织权限；清除 Cookie 后不会自动取回原账号数据。Chat 和经验按账号隔离，技术文档库目前共享。
+- **模型输出仍需核实。** Issue 归属与相似判断可能出错，程序校验不等于证明结论真实；提供人工修正和经验审核，主链路没有确定性的最终结论引用审计。
+- **输入及预算有边界。** 文件上传仅支持 Markdown；上下文压缩使用保守字符估算，章节窗口和工具输出预算也按字符计算，不等于精确 Token 预算。未实现用户画像或偏好记忆。
+- **当前没有自主子 Agent 管理。** 主 Agent 自主选择检索工具，独立整理 Agent 由后台任务调度；旧固定多 Agent 包保留用于历史测试。调用云模型时，相关上下文仍会发送到所配置的供应商。
+
+## 仓库文件约定
+
+`.env`、本地覆盖配置、Cookie、数据库、日志、缓存和 `artifacts/` 不提交；`.dockerignore` 另行排除构建上下文中的敏感文件及本地产物。正式配置模板、部署文件、源码、测试和前端依赖保持可用。忽略规则不清除 Git 历史，也不清理已经产生的镜像或构建缓存。

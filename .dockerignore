@@ -1,0 +1,64 @@
+# Git exclusions do not apply to the Docker build context.
+.git
+**/.env
+**/.env.*
+!.env.example
+
+# Local development tools and caches
+.claude
+.idea
+.vscode
+**/node_modules
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/venv
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Generated output and local application state
+artifacts
+bin
+dist
+tmp
+build
+coverage
+data
+uploads
+**/*.log
+**/*.exe
+**/*.test
+**/coverage*.out
+**/*.coverprofile
+**/*.prof
+**/*.pprof
+**/*.pid
+**/*.pid.lock
+**/*.cookies
+**/*.pem
+**/*.key
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite-*
+**/*.sqlite3-*
+
+# Local overrides must not be copied into /app/manifest/config.
+manifest/config/config.local.yaml
+manifest/config/config.local.yml
+manifest/config/*.local.yaml
+manifest/config/*.local.yml
+manifest/docker/docker-compose.local.yaml
+manifest/docker/docker-compose.local.yml
+
+# Editor and archive metadata
+**/.DS_Store
+**/__MACOSX
+**/._*
+**/*.swp
+**/*.swo
+**/*~
+
+# Keep source, tests, fixtures, web assets, prompts, and deployment templates.
