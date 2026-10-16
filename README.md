@@ -42,30 +42,34 @@ Pilot 是一个面向开发者的本地排障工作台。
 <a id="demo"></a>
 ## Product demo
 
-下面来自本地“下游接口响应缓慢”演示：真实 HTTP 请求产生 Elasticsearch 日志、Prometheus 指标和 Jaeger Trace，Agent 通过工具读取证据。场景可重复注入、恢复；截图不是生产事故记录。
+先看看 Pilot 的实际工作界面。下图展示一次本地演示环境中的排障对话：Agent 调查结束后，以可阅读的形式呈现诊断结果和证据。
 
-**查看调查过程与工具参数**：从服务响应变慢的问题开始，展开日志、指标和链路调查步骤，查看实际 `query_traces` 调用及 Trace ID。
+![Pilot 排障工作台：故障恢复后的对话与分析结果](docs/images/demo/04-agent-recovery.png)
 
-![Pilot 调查过程与真实链路工具调用](docs/images/demo/01-agent-investigation.png)
+<sub>真实本地运行截图 · 演示数据，不是生产事故。</sub>
 
-**重新查询，确认当前状态**：恢复后，Agent 重新获取日志、P95 和 Trace，引用实际请求 ID，并说明仍未验证的范围。
+### From question to evidence
 
-![Pilot 恢复后的证据与诊断结果](docs/images/demo/04-agent-recovery.png)
+当服务响应变慢时，Pilot 会按需检索日志、指标与调用链。执行步骤可以展开，查看工具调用参数以及关联的 Trace ID。
+
+![Pilot Agent 的调查过程与链路工具调用](docs/images/demo/01-agent-investigation.png)
+
+本次演示使用可重复的“下游 HTTP 接口响应缓慢”场景：真实请求产生观测数据，Agent 自行查询证据，没有获得预设根因。恢复后还可以重新查询当前状态，而不是沿用之前的诊断。
 
 <details>
-<summary>展开查看 Prometheus 趋势与 Jaeger 原始链路证据</summary>
+<summary>查看底层观测证据：Prometheus 趋势与 Jaeger Trace</summary>
 
-P95 从约 **49 ms → 1.74 s → 49 ms**；这是直方图估算值，单次请求实测约 **41 ms → 1.5 s → 41 ms**。两服务曲线基本重合，图中时间为 UTC。
+本地采样的 P95 约为 **49 ms → 1.74 s → 49 ms**（正常、变慢、恢复），数值来自直方图估算，并非单次请求的精确耗时。
 
-![Prometheus 正常、变慢与恢复的延迟趋势](docs/images/demo/02-latency-metrics.png)
+![Prometheus 三阶段延迟趋势](docs/images/demo/02-latency-metrics.png)
 
-与 Agent 工具调用相同的慢请求 `d4b9b3a9ee0e59d4b942babf38466ad3`：网关 Server → HTTP Client → inventory Server，三个 Span 展示真实父子关系，不能将嵌套耗时相加。
+同一慢请求的 Trace ID：`d4b9b3a9ee0e59d4b942babf38466ad3`。Jaeger 显示网关 Server、HTTP Client 和 inventory Server 三个父子 Span；嵌套 Span 耗时不可直接相加。
 
-![Jaeger 慢请求父子 Span 与下游处理耗时](docs/images/demo/03-slow-request-trace.png)
+![Jaeger 慢请求调用链](docs/images/demo/03-slow-request-trace.png)
 
 </details>
 
-[截图说明与验收边界](docs/product-demo.md) · [启动、故障注入与验证步骤](docs/observability-demo.md)
+[真实截图与验收边界](docs/product-demo.md) · [复现故障演示](docs/observability-demo.md)
 
 <a id="quick-start"></a>
 ## Quick start
