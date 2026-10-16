@@ -1,42 +1,48 @@
+<div align="center">
+
 # Pilot
 
-**基于 Go 与 Eino ADK 的智能排障与经验知识库。**
+**让故障排查有迹可循，让解决经验能够复用。**
 
-Pilot 将日志、指标、调用链查询与技术文档检索接入排障 Agent，支持多轮分析、流式回答和执行过程查看。排障记录按问题持续跟踪，由独立整理 Agent 生成经验草稿，人工审核发布后供后续会话检索。
+An AI-powered troubleshooting workspace.
 
-项目重点是 Agent 的工程化：如何约束工具、组织检索上下文、管理长任务，以及将多轮排障记录沉淀为可审核的知识。当前定位为个人开发与本地演示项目，未提供生产规模或检索效果提升的量化结论。
+基于 Go 与 Eino ADK 的智能排障工作台。检索日志、指标、调用链和技术指南，将多轮故障排查整理为可审核、可复用的经验。
 
-## 核心功能
+[功能概览](#features) · [快速开始](#quick-start) · [技术细节](#under-the-hood) · [开发文档](#documentation)
 
-- **工具调用式排障**：按需查询 Elasticsearch 日志、Prometheus 告警与指标、Jaeger 调用链，并进行跨信号关联分析；执行过程与最终回答分开呈现。
-- **技术文档 RAG**：上传 Markdown 指南，结构感知切分后进行关键词与向量混合检索，补回命中章节的相关上下文。
-- **多轮对话**：原始历史与模型工作上下文分别保存，复用摘要中间件控制上下文增长。
-- **任务生命周期**：持久化 AgentRun 与事件，支持取消、重复请求识别、SSE 断线后的事件回放。
-- **Issue 跟踪与经验沉淀**：一个会话可跟踪多个交错问题，支持人工修正归属、手动整理和解决后自动整理；经验可编辑、审核、修订、归档与恢复发布。
+<sub>Go · Eino ADK · Elasticsearch · Prometheus · Jaeger · MySQL</sub>
 
-## 技术栈
+</div>
 
-| 分类 | 技术与用途 |
-| --- | --- |
-| 后端与 Agent | Go 1.24.10+、Gin、Eino v0.9.13 ADK、Tool Calling |
-| 数据存储 | MySQL：历史、工作上下文、Run、Issue、任务及经验版本；Redis：界面历史缓存 |
-| 文档检索 | Elasticsearch 8.12：BM25、dense_vector / HNSW kNN；项目实现 RRF 融合、重排与上下文预算 |
-| 可观测性 | Prometheus、Jaeger、OpenTelemetry、Elasticsearch 日志 |
-| 交互与部署 | SSE、原生 JavaScript、Docker Compose |
+---
 
-**两类知识库分别管理：**技术文档库保存在 ES，使用 `search_knowledge` 检索；排障经验库保存在 MySQL，使用 `search_experience` 检索当前账号审核通过的发布版。经验库目前采用关键词及服务过滤，不使用向量召回。
+<a id="features"></a>
+## What is Pilot?
 
-## 核心技术设计
+Pilot 是一个面向开发者的本地排障工作台。
 
-**Agent 与工具约束。** 外层 Graph 依次准备上下文、组装消息并进入 ADK。Eino 提供模型与工具接口、决策循环、事件和摘要中间件；Pilot 实现工具参数校验、查询范围及结果体积限制、账号范围传递与可恢复错误反馈。流式路径在工具调查后另做无工具模型调用，逐步输出最终回答，而非将调查中的每轮文本拼成结论。[主 Agent](internal/ai/agent/full_agent.go) · [工具实现](internal/ai/tools)
+它不只是让模型回答问题。Agent 可以主动检索可观测性数据及技术指南，呈现调查过程；同一会话中的不同故障也能持续跟踪，并在人工审核后沉淀为可复用的排障经验。
 
-**RAG 检索与上下文补全。** 用 Goldmark 识别 Markdown 标题和块边界，保护代码、列表及表格，复用 Eino 递归切分长段落。ES 同时保存子 Chunk 与父章节记录，子 Chunk 用于 BM25 / kNN 召回，再由项目执行 RRF 融合与重排。复用 Eino Parent Retriever 收集父章节 ID，项目负责 ES 读取、多命中窗口合并、章节补全及字符预算，明确标记不完整内容，避免直接把孤立片段当成完整指南。[入库与召回](internal/ai/retriever/knowledge_retriever.go) · [章节扩展](internal/ai/retriever/section_retriever.go)
+### Investigate with evidence
 
-**AgentRun 与多轮上下文。** Agent 执行 Context 独立于 HTTP 连接，客户端断线不直接取消任务；持久化事件序号供重连回放，`run_id` 用于幂等识别，并提供主动取消。模型工作上下文保留消息、工具调用和摘要，通过会话串行保护、历史游标和 Revision 校验协调保存。摘要机制复用 Eino，持久化与并发控制由项目实现。[Run 管理](internal/controller/chat_runs.go) · [工作上下文](internal/ai/agent/session_context.go)
+按需查询 Elasticsearch 日志、Prometheus 告警和指标、Jaeger 调用链，并进行跨信号关联。工具调用过程与最终回答分别呈现，便于回看排障依据。
 
-**Issue 与经验知识管理。** Session 表示会话，Run 表示一次执行，Issue 表示跨轮推进的问题，经验条目是可独立复用的知识。后台按增量记录更新 Issue，使用 MySQL 任务、租约和版本水位协调独立整理 Agent；整理结果经过程序校验后成为待审草稿，人工发布才进入经验检索。修订期间旧发布版继续可用，模型不会直接覆盖已发布知识。[后台任务](internal/knowledge/worker.go) · [Issue 整理](internal/knowledge/issue_worker.go) · [审核与版本](internal/knowledge/service.go)
+### Search your documentation
 
-## 快速启动
+上传 Markdown 技术指南。结合关键词与向量检索，补回命中片段所在章节的相关上下文，而不只是返回孤立文本。
+
+### Turn incidents into knowledge
+
+一个会话可以跟踪多个交错 Issue。独立整理 Agent 汇总跨轮证据并生成经验草稿；人工审核发布后，历史经验可以在新会话中检索。
+
+### Stay in control
+
+查看 Agent 执行进度，取消任务，或在 SSE 连接断开后按事件序号续接。原始历史和模型工作上下文分别保存，长会话按容量进行摘要。
+
+> 产品截图及演示素材后续由作者补充。这里不使用模拟运行画面。
+
+<a id="quick-start"></a>
+## Quick start
 
 以下以 **PowerShell、本机 Go 服务 + Docker 依赖**为例；macOS / Linux 可使用 `cp` 复制配置并运行同样的 Docker 与 Go 命令。所有命令均在仓库根目录执行。
 
@@ -99,7 +105,25 @@ go run ./cmd -config manifest/config/config.yaml
 
 完整容器运行使用 Compose 的 `app` profile 和 [config.docker.yaml](manifest/config/config.docker.yaml)。仓库中的 `artifacts/startup` 是被忽略的本地环境，不是首次安装的必要依赖。Compose 含开发用口令、关闭认证的依赖及端口映射，仅用于本地演示。
 
-## 测试与验证
+<a id="under-the-hood"></a>
+## Under the hood
+
+首页只简述关键实现。完整设计、源码位置和限制可沿链接继续阅读。
+
+| 主题 | 关键实现 | 深入阅读 |
+| --- | --- | --- |
+| **Agent execution** | Eino ADK 工具调用、参数约束、调查与最终回答分离 | [主 Agent](internal/ai/agent/full_agent.go) · [实现指南](docs/ADK_EXPERIENCE_GUIDE.md) |
+| **Hybrid retrieval** | Markdown 结构切分、BM25 / kNN、RRF 融合及章节补全 | [检索实现](internal/ai/retriever/knowledge_retriever.go) · [阅读指南](docs/MARKDOWN_RAG_GUIDE.md) |
+| **Run & context** | SSE 事件回放、请求幂等、上下文持久化与摘要 | [Run 管理](internal/controller/chat_runs.go) · [对话说明](docs/AGENT_CHAT_UI.md) |
+| **Knowledge curation** | 跨轮 Issue 跟踪、后台 Job、人工审核与版本管理 | [知识任务](internal/knowledge/worker.go) · [设计说明](docs/ISSUE_KNOWLEDGE_GUIDE.md) |
+
+Pilot 的两类知识库职责不同：**技术文档库**使用 Elasticsearch BM25 / 向量混合检索；**排障经验库**存放在 MySQL，当前按关键词和服务过滤，仅返回当前账号审核通过且已发布的版本，并未使用向量检索。
+
+### Stack
+
+Go · Gin · Eino ADK · Elasticsearch 8.12 · MySQL · Redis · Prometheus · Jaeger · OpenTelemetry · SSE · Docker Compose
+
+## Testing
 
 ```powershell
 go test ./...
@@ -119,7 +143,8 @@ Go 存储测试使用 SQLite，需要 **`CGO_ENABLED=1` 和 C 编译器**；前�
 
 这些机制测试不代表真实模型准确率或检索召回率评估。可选的 [Issue 经验验收脚本](scripts/issue_experience_smoke.py) 使用真实服务、模型和数据库，会写入测试数据并产生模型费用；当前脚本依赖 Python Playwright 及 Edge。历史模型验收未完整覆盖最新版，不能视为当前端到端全部通过。可选 Redis Markdown 样例测试在样例不存在时会跳过。
 
-## 技术文档索引
+<a id="documentation"></a>
+## Documentation
 
 - [ADK 主链路、上下文与经验库](docs/ADK_EXPERIENCE_GUIDE.md)
 - [Issue 跟踪与知识更新](docs/ISSUE_KNOWLEDGE_GUIDE.md)
@@ -130,7 +155,7 @@ Go 存储测试使用 SQLite，需要 **`CGO_ENABLED=1` 和 C 编译器**；前�
 
 [旧架构说明](docs/LEGACY_ARCHITECTURE.md)、ADK Spike、证据图和早期验收报告属于历史参考。部分旧文档及验证脚本仍描述已移除的多 Agent HTTP 路径，当前路由以 [cmd/main.go](cmd/main.go) 为准。
 
-## 当前限制
+## Current boundaries
 
 - **事件回放不是推理恢复。** 客户端重连可以继续接收现有 Run 事件；服务进程重启后，未完成执行会标记失败并保留已有内容，不从 ADK 推理中间状态续跑。知识整理后台任务具有独立的补扫和重试机制。
 - **设备账号不是完整登录系统。** 使用 HttpOnly 随机 Cookie 标识账号，没有密码登录、跨设备恢复和组织权限；清除 Cookie 后不会自动取回原账号数据。Chat 和经验按账号隔离，技术文档库目前共享。
