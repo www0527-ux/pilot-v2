@@ -112,6 +112,11 @@ func (c *ChatController) agentContext(ctx context.Context) (context.Context, con
 	return c.agentTimeout(ctx)
 }
 
+func (c *ChatController) agentPersistsHistory() bool {
+	writer, ok := c.agent.(interface{ PersistsConversationHistory() bool })
+	return ok && writer.PersistsConversationHistory()
+}
+
 // ChatRequest 聊天请求
 type ChatRequest struct {
 	UserID          string `json:"user_id"`
@@ -168,9 +173,10 @@ func (c *ChatController) Chat(g *gin.Context) {
 		return
 	}
 
-	// 短期记忆由 FullPilotAgent 写入；此处只落长期历史。
+	// FullPilotAgent commits raw history with its working snapshot; legacy/test
+	// agents may still delegate history persistence to the controller.
 	c.persistTurn(reqCtx, req.UserID, req.SessionID, req.Query, response.Content, persistTurnOptions{
-		SaveHistory: true,
+		SaveHistory: !c.agentPersistsHistory(),
 		RunID:       interactionID,
 	})
 	c.recordInteraction(reqCtx, memory.InteractionRecord{ID: interactionID, UserID: req.UserID, SessionID: req.SessionID, Mode: "chat", Status: "success", Query: req.Query, Answer: response.Content})

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,8 +14,97 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 	"shanyangcode.com/pilot/internal/ai/progress"
+	"shanyangcode.com/pilot/internal/memory"
 )
+
+func TestAnswerStreamCommitsTurnOrReturnsPersistenceFailure(t *testing.T) {
+	for _, failSave := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failSave=%v", failSave), func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.AutoMigrate(&memory.SessionContext{}, &memory.ConversationHistory{}); err != nil {
+				t.Fatal(err)
+			}
+			if failSave {
+				if err := db.Exec("CREATE TRIGGER reject_history BEFORE INSERT ON conversation_histories BEGIN SELECT RAISE(ABORT, 'injected failure'); END").Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			store := memory.NewSessionContextManager(db)
+			loaded, err := store.Load(ctx, "owner", "session")
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := &contextRun{store: store, loaded: loaded, rawQuery: "继续", release: func() {}}
+			ctx = context.WithValue(progress.WithRunID(ctx, "run-one"), contextRunKey{}, run)
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var request struct {
+					Stream bool `json:"stream"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				if !request.Stream {
+					fmt.Fprint(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"investigation done"},"finish_reason":"stop"}]}`)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"final answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			}))
+			defer server.Close()
+			reader, err := newStreamingTestRunnable(t, ctx, server.URL).Stream(ctx, []*schema.Message{schema.SystemMessage("system"), schema.UserMessage("expanded continue instruction")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			var answer string
+			var streamErr error
+			for {
+				message, err := reader.Recv()
+				if err != nil {
+					streamErr = err
+					break
+				}
+				if event, ok := progress.FromMessage(message); ok && event.Kind == "answer" && event.Status == "delta" {
+					answer += event.Text
+				}
+			}
+			if answer != "final answer" || calls.Load() != 2 {
+				t.Fatalf("answer=%q model calls=%d", answer, calls.Load())
+			}
+			var history []memory.ConversationHistory
+			db.Order("id ASC").Find(&history)
+			saved, err := store.Load(ctx, "owner", "session")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failSave {
+				if !errors.Is(streamErr, memory.ErrTurnPersistence) || len(history) != 0 || saved.Record.Revision != 0 {
+					t.Fatalf("failed commit: err=%v history=%v snapshot=%+v", streamErr, history, saved)
+				}
+			} else {
+				if streamErr != io.EOF || len(history) != 2 || history[0].Content != "继续" || len(saved.Messages) != 2 || saved.Messages[0].Content != "expanded continue instruction" {
+					t.Fatalf("commit: err=%v history=%v messages=%v", streamErr, history, saved.Messages)
+				}
+				for _, message := range saved.Messages {
+					if message.Role == schema.System {
+						t.Fatal("persisted temporary system prompt")
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestSeparatedStreamPublishesOnlyFinalModelTextLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

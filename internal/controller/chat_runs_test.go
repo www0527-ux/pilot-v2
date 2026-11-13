@@ -14,7 +14,64 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"shanyangcode.com/pilot/internal/ai/progress"
+	"shanyangcode.com/pilot/internal/memory"
 )
+
+type committingAgent struct {
+	fakeAgent
+	failCommit bool
+}
+
+func (*committingAgent) PersistsConversationHistory() bool { return true }
+
+func (a *committingAgent) Stream(ctx context.Context, owner, session, query string) (*schema.StreamReader[*schema.Message], error) {
+	reader, writer := schema.Pipe[*schema.Message](8)
+	go func() {
+		defer writer.Close()
+		for _, event := range []progress.Event{{Kind: "answer", Status: "started"}, {Kind: "answer", Status: "delta", Text: "retained answer"}, {Kind: "answer", Status: "ended"}} {
+			writer.Send(progress.Message(event), nil)
+		}
+		if a.failCommit {
+			writer.Send(nil, memory.ErrTurnPersistence)
+		}
+	}()
+	return reader, nil
+}
+
+func TestControllerDoesNotRepeatAgentHistoryCommit(t *testing.T) {
+	for _, mode := range []string{"chat", "stream", "failed-commit"} {
+		t.Run(mode, func(t *testing.T) {
+			history := &fakeHistory{}
+			agent := &committingAgent{fakeAgent: fakeAgent{generateResult: "answer"}, failCommit: mode == "failed-commit"}
+			c := NewChatController(agent, nil, &fakeShortTerm{}, history)
+			engine := gin.New()
+			engine.POST("/chat", c.Chat)
+			engine.POST("/stream", c.StreamChat)
+			endpoint := "/stream"
+			if mode == "chat" {
+				endpoint = "/chat"
+			}
+			id := uuid.NewString()
+			request := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(`{"user_id":"u","session_id":"s","query":"q","run_id":"`+id+`"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || len(history.records) != 0 {
+				t.Fatalf("status=%d duplicate history=%v", response.Code, history.records)
+			}
+			if mode == "failed-commit" {
+				run, err := c.findRun(context.Background(), id, "u", "s")
+				if err != nil {
+					t.Fatal(err)
+				}
+				record := run.snapshot()
+				if record.Status != "failed" || record.Answer != "retained answer" || !strings.Contains(response.Body.String(), "对话保存失败") {
+					t.Fatalf("record=%+v events=%s", record, response.Body.String())
+				}
+			}
+		})
+	}
+}
 
 type replayAgent struct {
 	fakeAgent

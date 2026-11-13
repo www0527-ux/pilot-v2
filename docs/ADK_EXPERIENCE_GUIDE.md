@@ -44,18 +44,18 @@ flowchart TD
 | 部分 | 职责 |
 | --- | --- |
 | Eino ADK | 消息和工具循环、工具回填、Middleware 执行顺序、官方摘要生成与替换 |
-| Pilot 会话层 | 账号/会话隔离、读取未覆盖的原始历史、跨请求工作上下文持久化 |
+| Pilot 会话层 | 账号/会话隔离、只加载工作快照、原始问答与快照事务提交 |
 | Pilot 压缩策略 | 容量估算、阈值、摘要提示词、保留当前请求、摘要输出预算 |
 | Pilot 并发保护 | 同会话串行化、跨进程乐观锁、清理历史后的版本栅栏 |
 | Pilot 经验库 | 选择收录时机、草稿/审核/验证、版本发布、私有检索与来源追溯 |
 
 三份数据含义不同：
 
-1. `conversation_history`：界面原始问答，持续写入，不被摘要替换；Redis 只是历史查询缓存。
+1. `conversation_histories`：界面原始问答，持续写入，不被摘要替换；Redis 只是历史查询缓存。
 2. `session_contexts`：模型工作上下文，可包含官方摘要、近期对话、成对的工具调用及结果。按 `(user_id, session_id)` 持久化，下一轮加载它，而非重读最近 12 条覆盖摘要。
 3. `experience_*`：跨会话故障案例，经审核的版本才可检索。日志/指标/调用链首先是工具结果，只在经过整理后作为案例来源；不会因为被查询就自动成为长期记忆。
 
-`prepareContext` 先获得会话门闩，再读取 SQL。`HistoryCursor` 指明已读到哪个历史行；`CoveredRunsJSON` 防止工作上下文先保存、控制器历史稍晚落库时又将同一轮重复注入。64 个固定门闩槽限制内存占用，哈希冲突会使少量不同会话串行。SQL 保存使用 Revision CAS，避免另一个进程的旧请求覆盖新上下文；发生冲突时保留最终回答并显示保存失败提示。清理历史会留下更高 Revision 的空上下文，防止正在执行的旧请求把已清理的记忆重新写回来。
+`prepareContext` 先获得会话门闩，再只读取 SQL 工作快照，不查询原始历史，也不在正常加载中使用历史游标或已覆盖 Run 集合。64 个固定门闩槽限制内存占用，哈希冲突会使少量不同会话串行。最终回答生成后，在释放门闩前通过 `CommitTurn` 将原始问题、原始回答和工作快照放入同一个短事务提交；控制器不再重复保存主 Agent 的原始历史。SQL 保存使用行锁与 Revision CAS，旧版本写入会导致整个事务回滚。保存失败会终止本次执行并明确提示，流式页面已经收到的回答仍保留；不会自动将历史表补入下一轮。清理历史会留下更高 Revision 的空上下文，防止正在执行的旧请求重新写回对话。`LastRunID` 仅用于识别最近一次相同提交的重试。旧数据在启动时执行一次版本化迁移，详见 [会话上下文说明](SESSION_CONTEXT_GUIDE.md)。
 
 摘要在每次模型调用前检查容量，**检查不等于每次重新总结**。只有估算超过阈值才调用摘要模型。估算包含工具 Schema、调用参数和消息 JSON，采用保守字符计数，并非 DeepSeek 精确 tokenizer。当前默认 24000、摘要输出上限 1800 Token。单条超大用户请求或持续输出巨大的工具结果仍可能重复触发，后续可接精确计数与官方 `reduction`；本轮没有实现工具结果转存。
 
@@ -113,7 +113,7 @@ Run 结束回调创建 SQL 任务，不同步调用整理模型。Worker 每 2 �
 | 1 | `cmd/main.go` | 两个 ADK Agent、Worker、工具、Controller 如何装配 |
 | 2 | `internal/ai/agent/full_agent.go` | 外层 Graph 和 ADK 工具循环配置 |
 | 3 | `internal/ai/agent/session_context.go` | 读取、会话并发门闩、摘要策略、保存 |
-| 4 | `internal/memory/session_context.go` | 原始历史游标、已覆盖 Run、Revision CAS |
+| 4 | `internal/memory/session_context.go` | 工作快照加载、原始问答事务提交、Revision CAS |
 | 5 | `internal/ai/agent/context_prefetcher.go` | 静态背景/持久历史/当前提问的模板变量 |
 | 6 | `internal/ai/agent/answer_stream.go` | 调查事件与最终回答的边界、取消传播 |
 | 7 | `internal/knowledge/agent.go` | 子 Agent 提示词、只读工具、结构化候选 |

@@ -144,7 +144,7 @@ go run ./cmd -config manifest/config/config.yaml
 | --- | --- | --- |
 | **Agent execution** | Eino ADK 工具调用、参数约束、调查与最终回答分离 | [主 Agent](internal/ai/agent/full_agent.go) · [实现指南](docs/ADK_EXPERIENCE_GUIDE.md) |
 | **Hybrid retrieval** | Markdown 结构切分、BM25 / kNN、RRF 融合及章节补全 | [检索实现](internal/ai/retriever/knowledge_retriever.go) · [阅读指南](docs/MARKDOWN_RAG_GUIDE.md) |
-| **Run & context** | SSE 事件回放、请求幂等、上下文持久化与摘要 | [Run 管理](internal/controller/chat_runs.go) · [对话说明](docs/AGENT_CHAT_UI.md) |
+| **Run & context** | SSE 事件回放、请求幂等、工作快照加载、原始问答与快照事务提交、摘要 | [Run 管理](internal/controller/chat_runs.go) · [上下文与事务提交](docs/SESSION_CONTEXT_GUIDE.md) · [对话说明](docs/AGENT_CHAT_UI.md) |
 | **Knowledge curation** | 跨轮 Issue 跟踪、后台 Job、人工审核与版本管理 | [知识任务](internal/knowledge/worker.go) · [设计说明](docs/ISSUE_KNOWLEDGE_GUIDE.md) |
 
 Pilot 的两类知识库职责不同：**技术文档库**使用 Elasticsearch BM25 / 向量混合检索；**排障经验库**存放在 MySQL，当前按关键词和服务过滤，仅返回当前账号审核通过且已发布的版本，并未使用向量检索。
@@ -177,6 +177,7 @@ Go 存储测试使用 SQLite，需要 **`CGO_ENABLED=1` 和 C 编译器**；前�
 ## Documentation
 
 - [ADK 主链路、上下文与经验库](docs/ADK_EXPERIENCE_GUIDE.md)
+- [会话工作快照与原始问答的事务提交](docs/SESSION_CONTEXT_GUIDE.md)
 - [Issue 跟踪与知识更新](docs/ISSUE_KNOWLEDGE_GUIDE.md)
 - [Markdown 切分与父子检索](docs/MARKDOWN_RAG_GUIDE.md)
 - [知识召回与章节补全代码复盘](docs/knowledge-retrieval-flow.md)

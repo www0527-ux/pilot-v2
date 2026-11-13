@@ -337,6 +337,13 @@ func TestLaterRunWaitsForMissingEarlierTracking(t *testing.T) {
 	w := NewWorker(s, g)
 	earlier := issueRun(t, s, "session", "MySQL初始问题", "mysql_metrics")
 	later := issueRun(t, s, "session", "MySQL补充问题", "mysql_logs")
+	// The scenario requires distinct creation times. Consecutive time.Now calls
+	// can return the same wall-clock timestamp, especially on Windows.
+	later.CreatedAt = earlier.CreatedAt.Add(time.Millisecond)
+	later.UpdatedAt = later.CreatedAt
+	if err := s.db.Model(&later).UpdateColumns(map[string]any{"created_at": later.CreatedAt, "updated_at": later.UpdatedAt}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Enqueue(ctx, "owner", later.ID, false); err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +351,7 @@ func TestLaterRunWaitsForMissingEarlierTracking(t *testing.T) {
 		t.Fatal(err)
 	}
 	if g.tracks != 0 {
-		t.Fatal("newer run overtook missing earlier hook")
+		t.Fatalf("newer run overtook missing earlier hook: earlier=%s later=%s trackingSince=%s", earlier.CreatedAt.Format(time.RFC3339Nano), later.CreatedAt.Format(time.RFC3339Nano), s.trackingSince.Format(time.RFC3339Nano))
 	}
 	if _, err := s.Enqueue(ctx, "owner", earlier.ID, false); err != nil {
 		t.Fatal(err)

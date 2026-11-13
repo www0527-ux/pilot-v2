@@ -39,6 +39,9 @@ func OpenDB(ctx context.Context, cfg config.Database) (*gorm.DB, error) {
 	if err := db.WithContext(ctx).AutoMigrate(&ConversationHistory{}, &InteractionRecord{}, &InteractionFeedback{}, &AgentRun{}, &SessionContext{}); err != nil {
 		return nil, fmt.Errorf("auto migrate failed: %w", err)
 	}
+	if err := migrateSessionContexts(ctx, db); err != nil {
+		return nil, fmt.Errorf("migrate session contexts failed: %w", err)
+	}
 
 	return db, nil
 }
@@ -128,6 +131,7 @@ func (m *ConversationHistoryManager) GetSessionHistory(ctx context.Context, user
 	err := m.db.WithContext(ctx).
 		Where("user_id = ? AND session_id = ?", userID, sessionID).
 		Order("created_at DESC").
+		Order("id DESC").
 		Limit(limit).
 		Find(&history).Error
 	if err != nil {
@@ -148,8 +152,8 @@ func (m *ConversationHistoryManager) DeleteSessionHistory(ctx context.Context, u
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Keep a revision tombstone: an in-flight first request must not recreate
 		// working context after the user cleared this session.
-		blank := SessionContext{UserID: userID, SessionID: sessionID, Revision: 1, MessagesJSON: "[]", CoveredRunsJSON: "[]"}
-		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}, {Name: "session_id"}}, DoUpdates: clause.Assignments(map[string]any{"revision": gorm.Expr("revision + 1"), "messages_json": "[]", "covered_runs_json": "[]", "history_cursor": 0, "last_run_id": "", "updated_at": time.Now()})}).Create(&blank).Error; err != nil {
+		blank := SessionContext{UserID: userID, SessionID: sessionID, Revision: 1, ContextVersion: sessionContextVersion, MessagesJSON: "[]"}
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}, {Name: "session_id"}}, DoUpdates: clause.Assignments(map[string]any{"revision": gorm.Expr("revision + 1"), "messages_json": "[]", "context_version": sessionContextVersion, "last_run_id": "", "updated_at": time.Now()})}).Create(&blank).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("user_id = ? AND session_id = ?", userID, sessionID).Delete(&ConversationHistory{}).Error; err != nil {

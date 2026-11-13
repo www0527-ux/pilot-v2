@@ -346,6 +346,10 @@ func prepareAgentQuery(query string) string {
 	}
 }
 
+// PersistsConversationHistory tells the controller that successful turns have
+// already committed their raw history together with the working snapshot.
+func (a *FullPilotAgent) PersistsConversationHistory() bool { return true }
+
 // Generate 生成响应（非流式）
 func (a *FullPilotAgent) Generate(ctx context.Context, userID, sessionID, query string) (*schema.Message, error) {
 	ctx = identity.WithOwner(ctx, userID)
@@ -354,6 +358,9 @@ func (a *FullPilotAgent) Generate(ctx context.Context, userID, sessionID, query 
 		return nil, err
 	}
 	defer release()
+	if run, _ := ctx.Value(contextRunKey{}).(*contextRun); run != nil {
+		run.rawQuery = query
+	}
 	// The graph assembles the durable working context; ADK compresses it as needed.
 	preparedQuery := prepareAgentQuery(query)
 	userMsg := &UserMessage{
@@ -395,6 +402,9 @@ func (a *FullPilotAgent) Stream(ctx context.Context, userID, sessionID, query st
 	ctx, release, err := a.prepareContext(ctx, userID, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	if run, _ := ctx.Value(contextRunKey{}).(*contextRun); run != nil {
+		run.rawQuery = query
 	}
 	// The graph assembles the durable working context; ADK compresses it as needed.
 	preparedQuery := prepareAgentQuery(query)

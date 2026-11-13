@@ -330,7 +330,9 @@ func (c *ChatController) startRun(g *gin.Context, req *ChatRequest, mode string,
 	c.runs.mu.Unlock()
 	ctx = progress.WithEmitter(ctx, r.append)
 	copyReq := *req
+	//执行agent，接收输出，追加事件
 	go c.executeRun(ctx, r, &copyReq, mode, resume)
+	//继续执行，负责向浏览器发送SSE事件流
 	c.serveRun(g, r)
 }
 func (c *ChatController) executeRun(ctx context.Context, r *chatRun, req *ChatRequest, mode string, resume *ResumeRequest) {
@@ -370,6 +372,9 @@ func (c *ChatController) executeRun(ctx context.Context, r *chatRun, req *ChatRe
 	}()
 	fail := func(err error) {
 		status, summary := "failed", "执行失败，已保留接收到的内容"
+		if errors.Is(err, memory.ErrTurnPersistence) {
+			summary = "回答已生成，但本轮对话保存失败；已保留本次回答"
+		}
 		if errors.Is(err, context.Canceled) {
 			status, summary = "cancelled", "已取消"
 		}
@@ -400,6 +405,7 @@ func (c *ChatController) executeRun(ctx context.Context, r *chatRun, req *ChatRe
 				return
 			}
 			if event, ok := progress.FromMessage(chunk); ok {
+				//添加事件到内存，并且唤醒等待的goroutine，进行消息发送
 				r.append(event)
 				continue
 			}
@@ -471,7 +477,7 @@ func (c *ChatController) executeRun(ctx context.Context, r *chatRun, req *ChatRe
 		fail(errors.New("answer end missing"))
 		return
 	}
-	c.persistTurn(ctx, req.UserID, req.SessionID, req.Query, record.Answer, persistTurnOptions{RunID: req.RunID, SaveHistory: true, SaveShortTermUser: mode != "stream", SaveShortTermAssistant: true})
+	c.persistTurn(ctx, req.UserID, req.SessionID, req.Query, record.Answer, persistTurnOptions{RunID: req.RunID, SaveHistory: mode != "stream" || !c.agentPersistsHistory(), SaveShortTermUser: mode != "stream", SaveShortTermAssistant: true})
 	if multiResult != nil {
 		interactionStatus := "completed"
 		if finalFailed {

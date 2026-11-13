@@ -113,7 +113,9 @@ func separatedADKStream(runner *adk.Runner, finalModel model.ToolCallingChatMode
 			}
 			if run, _ := ctx.Value(contextRunKey{}).(*contextRun); run != nil {
 				if err := run.save(ctx, filtered, answer); err != nil {
-					progress.Emit(ctx, progress.Event{Kind: "notice", Status: "warning", Summary: "本次回答已保留，但工作上下文保存失败；下一轮将回退到会话记录"})
+					progress.Emit(ctx, progress.Event{Kind: "notice", Status: "warning", Summary: "回答已生成，但本轮对话保存失败；本次页面回答已保留"})
+					send(nil, err)
+					return
 				}
 			}
 		}()

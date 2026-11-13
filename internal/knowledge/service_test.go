@@ -345,6 +345,12 @@ func TestAutomaticReconciliationAndNoDraft(t *testing.T) {
 	ctx := context.Background()
 	s := testService(t)
 	r := seedRun(t, s, "owner")
+	// Keep the pre-enable run strictly before the setting's timestamp even
+	// when the wall clock returns the same value for consecutive operations.
+	r.CreatedAt = time.Now().Add(-time.Minute)
+	if err := s.db.Model(&r).UpdateColumn("created_at", r.CreatedAt).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := s.MaybeEnqueue(ctx, r); err != nil {
 		t.Fatal(err)
 	}

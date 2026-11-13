@@ -365,7 +365,7 @@ step = max(1, 剩余预算 / (2 * 当前窗口数))   // 整数除法
 
 ADK 将工具 JSON 作为工具消息放回调查模型上下文，模型可继续查询其他工具或修正关键词。收到 `success=false` 不会自动由程序再搜一次；是否重试取决于模型决策和剩余迭代。ToolCallbacks 将调用参数、结果摘要及结果记录为进度事件，预览有裁剪/脱敏；进度预览不是替代工具返回给模型的完整正文。
 
-`separatedADKStream` 结束调查后使用捕获的最新 ADK 工作上下文（或最后模型输入）生成最终回答；上下文可能已经被官方 summarization 压缩，所以不能保证所有原始文档全文始终保留。完成后将工作消息和回答保存到 SQL 会话上下文；保存失败仅发 warning，不撤销已生成的回答。Redis 的用户/助手短期消息缓存写入失败也记录日志，不等同于本轮检索失败。
+`separatedADKStream` 结束调查后使用捕获的最新 ADK 工作上下文（或最后模型输入）生成最终回答；上下文可能已经被官方 summarization 压缩，所以不能保证所有原始文档全文始终保留。完成后通过 `CommitTurn` 将工作快照与原始问答在同一个 SQL 事务中保存；保存失败向上传递错误，Run 失败并保留已流出的回答，下一轮不自动从历史表补齐。Redis 的用户/助手短期消息缓存写入失败只记录日志，不等同于本轮检索失败。
 
 文档工具提供可识别的来源信息，但当前主链没有为每个最终答案引用做确定性的 ES 文档 ID 校验，也没有按窗口生成独立证据对象。`search_experience` 的 KB 版本引用记录是另一条链路，不要把它描述为文档工具的功能。特别是父章节不可用的合成返回仍沿用首个命中片段的身份字段，多个片段的完整逐项来源清单没有随格式化正文返回。
 
@@ -411,7 +411,8 @@ ADK 将工具 JSON 作为工具消息放回调查模型上下文，模型可继�
 | 调用工具发生参数解码等普通 Go 错误 | `recoverableToolErrors` | 转为 TOOL_QUERY_FAILED JSON，保留提示 | error=nil，Agent 可继续；无自动重试保证 | 失败观察 |
 | HTTP 普通/详细搜索遇到 Go error | `KnowledgeController.Search/SearchDetailed` | 返回 DependencyUnavailable；不走工具中间件 | HTTP 错误响应 | 入口直接失败 |
 | 模型自身错误/最终回答失败 | `separatedADKStream/readFinalAnswer` | 可重试模型错误由现有模型策略处理；不可恢复错误向上传递 | 同步错误或流式 Run 终止；不能伪称 RAG 成功即答复成功 | 上层错误终止 |
-| 工作上下文/短期缓存保存失败 | `contextRun.save/Generate/Stream` | 发 warning 或记录日志，不回滚已生成回答 | 当前回答可返回，后续会话可能回退 | 持久化层降级 |
+| 工作快照与原始问答提交失败 | `contextRun.save/CommitTurn` | 两表事务回滚，错误结束执行，保留已流出回答 | Run 失败；下一轮读取上次成功快照 | 持久化失败 |
+| 短期缓存保存失败 | `Generate/Stream` | 记录日志 | 不影响 SQL 中已提交的快照与问答 | 缓存降级 |
 
 不能把“error=nil”一律读成“完整知识召回成功”：它也可能是正常空结果、只保留片段、工具失败 JSON 或预算筛选后的更少内容。对于路降级，Detailed 的 Degraded/DegradationReason 可查看，但普通 Search/工具格式没有完整传递这组路状态；章节完整性元数据只说明返回范围，不等同于全部检索路健康。
 

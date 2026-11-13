@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -17,11 +18,12 @@ const sessionSummaryInstruction = `总结整个会话以便后续继续，而不
 
 type contextRunKey struct{}
 type contextRun struct {
-	loaded  memory.LoadedContext
-	store   *memory.SessionContextManager
-	latest  []*schema.Message
-	query   string
-	release func()
+	loaded   memory.LoadedContext
+	store    *memory.SessionContextManager
+	latest   []*schema.Message
+	query    string
+	rawQuery string
+	release  func()
 }
 
 // Gates are striped and bounded. The SQL revision fence also protects against
@@ -135,9 +137,9 @@ func (r *contextRun) save(ctx context.Context, messages []*schema.Message, answe
 		}
 	}
 	working = append(working, schema.AssistantMessage(answer, nil))
-	err := r.store.Save(ctx, r.loaded, working, progress.RunID(ctx))
+	err := r.store.CommitTurn(ctx, r.loaded, working, progress.RunID(ctx), r.rawQuery, answer)
 	if err != nil {
-		slog.WarnContext(ctx, "save ADK session context failed", "error", err)
+		return fmt.Errorf("%w: %w", memory.ErrTurnPersistence, err)
 	}
-	return err
+	return nil
 }
