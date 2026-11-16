@@ -92,8 +92,8 @@ func (r *KnowledgeRetriever) WithModelReranker(reranker ModelReranker) *Knowledg
 	return r
 }
 
-// IndexDocument chunks, embeds, and bulk-indexes a logical document. Any
-// partial bulk failure triggers a doc_id delete-by-query rollback.
+// IndexDocument chunks, embeds, and bulk-indexes a logical document. A final
+// bulk failure after retries triggers a doc_id delete-by-query rollback.
 func (r *KnowledgeRetriever) IndexDocument(ctx context.Context, doc *types.KnowledgeDocument) (err error) {
 	started := time.Now()
 	ctx, span := r.tracer.Start(ctx, "rag.index", trace.WithAttributes(attribute.String("rag.mode", "chunk")))
@@ -187,11 +187,14 @@ func (r *KnowledgeRetriever) IndexDocument(ctx context.Context, doc *types.Knowl
 	span.SetAttributes(attribute.Int("rag.chunk_count", len(chunks)), attribute.Int("rag.section_count", len(sections)))
 	indexed, err := r.es.BulkIndexDocuments(ctx, r.indexName, bulk)
 	if err != nil {
-		deleted, rollbackErr := r.deleteLogicalDocument(ctx, docID)
+		// Compensation still needs a bounded attempt when the import was canceled.
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		deleted, rollbackErr := r.deleteLogicalDocument(rollbackCtx, docID)
+		cancel()
 		if rollbackErr != nil {
-			return fmt.Errorf("index logical document failed after accepting %d chunks; rollback failed after deleting %d: %v: %w", len(indexed), deleted, rollbackErr, err)
+			return fmt.Errorf("index logical document failed after accepting %d records: %w; rollback failed after deleting %d: %w", len(indexed), err, deleted, rollbackErr)
 		}
-		return fmt.Errorf("index logical document failed after accepting %d chunks; rollback deleted %d: %w", len(indexed), deleted, err)
+		return fmt.Errorf("index logical document failed after accepting %d records; rollback deleted %d: %w", len(indexed), deleted, err)
 	}
 	doc.ID, doc.DocID, doc.ChunkCount, doc.CreatedAt, doc.UpdatedAt = docID, docID, len(chunks), createdAt, now
 	return nil

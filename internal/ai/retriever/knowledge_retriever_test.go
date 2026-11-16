@@ -2,11 +2,16 @@ package retriever
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"go.opentelemetry.io/otel"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"go.opentelemetry.io/otel"
 
 	"shanyangcode.com/pilot/internal/config"
 	"shanyangcode.com/pilot/pkg/elasticsearch"
@@ -117,6 +122,167 @@ func TestIndexDocumentRollsBackPartialBulkFailure(t *testing.T) {
 	err = r.IndexDocument(context.Background(), doc)
 	if err == nil || !strings.Contains(err.Error(), "rollback deleted 1") || store.deleteQuery == nil {
 		t.Fatalf("partial failure was not rolled back: err=%v query=%v", err, store.deleteQuery)
+	}
+}
+
+func TestIndexDocumentBulkRetriesAndCompensation(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		failureStatus int
+		recover       bool
+		deleteFails   bool
+		wantAttempts  int
+	}{
+		{name: "retry succeeds", failureStatus: 429, recover: true, wantAttempts: 2},
+		{name: "mapping failure", failureStatus: 400, wantAttempts: 1},
+		{name: "retry exhausted", failureStatus: 503, wantAttempts: 3},
+		{name: "compensation failure", failureStatus: 400, deleteFails: true, wantAttempts: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attempts, deletes := 0, 0
+			stored := map[string]bool{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				w.Header().Set("X-Elastic-Product", "Elasticsearch")
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case request.URL.Path == "/_bulk":
+					attempts++
+					decoder := json.NewDecoder(request.Body)
+					items := []map[string]any{}
+					hasErrors := false
+					for {
+						var operation struct {
+							Index struct {
+								ID string `json:"_id"`
+							} `json:"index"`
+						}
+						if err := decoder.Decode(&operation); err == io.EOF {
+							break
+						} else if err != nil {
+							t.Error(err)
+							w.WriteHeader(http.StatusBadRequest)
+							return
+						}
+						var document types.KnowledgeDocument
+						if err := decoder.Decode(&document); err != nil {
+							t.Error(err)
+							w.WriteHeader(http.StatusBadRequest)
+							return
+						}
+						if stored[operation.Index.ID] {
+							t.Errorf("successful document was resubmitted: %s", operation.Index.ID)
+						}
+						result := map[string]any{"_id": operation.Index.ID, "status": 201}
+						if document.RecordType == "section" && !(test.recover && attempts > 1) {
+							hasErrors = true
+							result["status"] = test.failureStatus
+							result["error"] = map[string]string{"reason": "injected write failure"}
+						} else {
+							stored[operation.Index.ID] = true
+						}
+						items = append(items, map[string]any{"index": result})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"errors": hasErrors, "items": items})
+				case strings.HasSuffix(request.URL.Path, "/_delete_by_query"):
+					deletes++
+					body, _ := io.ReadAll(request.Body)
+					if !strings.Contains(string(body), `"doc_id":"doc"`) {
+						t.Errorf("compensation did not target logical document: %s", body)
+					}
+					if test.deleteFails {
+						w.WriteHeader(http.StatusInternalServerError)
+						_, _ = io.WriteString(w, `{"error":{"reason":"injected compensation failure"}}`)
+						return
+					}
+					count := len(stored)
+					clear(stored)
+					_ = json.NewEncoder(w).Encode(map[string]any{"deleted": count, "failures": []any{}})
+				default:
+					_, _ = io.WriteString(w, `{"acknowledged":true,"version":{"number":"8.12.0"}}`)
+				}
+			}))
+			defer server.Close()
+			ctx := context.Background()
+			client, err := elasticsearch.New(ctx, config.Elasticsearch{Addresses: []string{server.URL}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := testRetrieverConfig()
+			cfg.RAG.ChunkSize, cfg.RAG.ChunkOverlap = 800, 120
+			r, err := newKnowledgeRetriever(ctx, client, fakeEmbedding{}, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc := &types.KnowledgeDocument{DocID: "doc", Title: "Runbook", Content: "# Runbook\n\nCheck the pool.\n", Metadata: map[string]string{"format": "markdown"}}
+			err = r.IndexDocument(ctx, doc)
+			if attempts != test.wantAttempts {
+				t.Fatalf("bulk attempts=%d, want %d", attempts, test.wantAttempts)
+			}
+			if test.recover {
+				if err != nil || deletes != 0 || len(stored) != 2 || doc.ChunkCount != 1 {
+					t.Fatalf("successful retry: deletes=%d stored=%v doc=%+v err=%v", deletes, stored, doc, err)
+				}
+				return
+			}
+			if err == nil || deletes != 1 || !strings.Contains(err.Error(), "injected write failure") {
+				t.Fatalf("compensation: deletes=%d stored=%v err=%v", deletes, stored, err)
+			}
+			if test.deleteFails {
+				if len(stored) != 1 || !strings.Contains(err.Error(), "injected compensation failure") {
+					t.Fatalf("compensation failure was lost: stored=%v err=%v", stored, err)
+				}
+			} else if len(stored) != 0 {
+				t.Fatalf("partial import was not deleted: %v", stored)
+			}
+		})
+	}
+}
+
+func TestIndexDocumentPreservesWriteAndCompensationErrors(t *testing.T) {
+	writeErr := errors.New("write failure")
+	deleteErr := errors.New("delete failure")
+	store := &fakeKnowledgeStore{bulkErr: writeErr, deleteErr: deleteErr}
+	r, err := newKnowledgeRetriever(context.Background(), store, fakeEmbedding{}, testRetrieverConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = r.IndexDocument(context.Background(), &types.KnowledgeDocument{DocID: "doc", Content: "text"})
+	if !errors.Is(err, writeErr) || !errors.Is(err, deleteErr) {
+		t.Fatalf("write or compensation error was not wrapped: %v", err)
+	}
+}
+
+type canceledBulkStore struct {
+	fakeKnowledgeStore
+	cancel context.CancelFunc
+}
+
+func (s *canceledBulkStore) BulkIndexDocuments(ctx context.Context, _ string, _ []elasticsearch.BulkDocument) ([]string, error) {
+	s.cancel()
+	return []string{"doc-0000"}, ctx.Err()
+}
+
+func (s *canceledBulkStore) DeleteByQuery(ctx context.Context, index string, query map[string]interface{}) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return 0, errors.New("compensation context has no deadline")
+	}
+	return s.fakeKnowledgeStore.DeleteByQuery(ctx, index, query)
+}
+
+func TestIndexDocumentCompensatesAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := &canceledBulkStore{fakeKnowledgeStore: fakeKnowledgeStore{deleteCount: 1}, cancel: cancel}
+	r, err := newKnowledgeRetriever(ctx, store, fakeEmbedding{}, testRetrieverConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = r.IndexDocument(ctx, &types.KnowledgeDocument{DocID: "doc", Content: "text"})
+	if !errors.Is(err, context.Canceled) || store.deleteQuery == nil || !strings.Contains(err.Error(), "rollback deleted 1") {
+		t.Fatalf("canceled import was not compensated: query=%v err=%v", store.deleteQuery, err)
 	}
 }
 

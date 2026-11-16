@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
@@ -15,7 +17,11 @@ import (
 	"shanyangcode.com/pilot/internal/config"
 )
 
-const maxErrorBodyBytes = 2048
+const (
+	maxErrorBodyBytes = 2048
+	maxBulkRetries    = 2
+	bulkRetryDelay    = 100 * time.Millisecond
+)
 
 // Client 是可注入的 Elasticsearch 客户端封装。
 type Client struct {
@@ -109,14 +115,19 @@ func (c *Client) IndexDocumentWithRefresh(ctx context.Context, index, docID stri
 	return nil
 }
 
-// BulkIndexDocuments writes a batch with one refresh. It reports every item
-// Elasticsearch accepted before returning a partial-failure error, allowing
-// callers to perform a traceable rollback by logical document identity.
+type bulkIndexOperation struct {
+	id   string
+	body []byte
+}
+
+// BulkIndexDocuments retries transient failures with the original IDs and bytes.
+// Accepted items are excluded from subsequent attempts and returned even when
+// another item ultimately fails, allowing the caller to compensate the import.
 func (c *Client) BulkIndexDocuments(ctx context.Context, index string, documents []BulkDocument) ([]string, error) {
 	if len(documents) == 0 {
 		return []string{}, nil
 	}
-	var body bytes.Buffer
+	operations := make([]bulkIndexOperation, 0, len(documents))
 	for _, document := range documents {
 		if strings.TrimSpace(document.ID) == "" {
 			return nil, fmt.Errorf("bulk document id cannot be empty")
@@ -129,46 +140,107 @@ func (c *Client) BulkIndexDocuments(ctx context.Context, index string, documents
 		if err != nil {
 			return nil, fmt.Errorf("marshal bulk document %s failed: %w", document.ID, err)
 		}
+		var body bytes.Buffer
 		body.Write(header)
 		body.WriteByte('\n')
 		body.Write(payload)
 		body.WriteByte('\n')
+		operations = append(operations, bulkIndexOperation{id: document.ID, body: body.Bytes()})
 	}
 
+	indexed := make([]string, 0, len(documents))
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return indexed, errors.Join(lastErr, err)
+		}
+		accepted, retry, err := c.bulkIndexAttempt(ctx, operations)
+		indexed = append(indexed, accepted...)
+		if err == nil {
+			return indexed, nil
+		}
+		if len(retry) == 0 || attempt == maxBulkRetries {
+			return indexed, fmt.Errorf("bulk index failed after %d attempts (accepted=%d): %w", attempt+1, len(indexed), err)
+		}
+		lastErr = err
+		timer := time.NewTimer(bulkRetryDelay << attempt)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return indexed, fmt.Errorf("bulk index retry canceled: %w", errors.Join(err, ctx.Err()))
+		case <-timer.C:
+		}
+		operations = retry
+	}
+}
+
+func (c *Client) bulkIndexAttempt(ctx context.Context, operations []bulkIndexOperation) ([]string, []bulkIndexOperation, error) {
+	var body bytes.Buffer
+	for _, operation := range operations {
+		body.Write(operation.body)
+	}
 	res, err := c.es.Bulk(bytes.NewReader(body.Bytes()), c.es.Bulk.WithContext(ctx), c.es.Bulk.WithRefresh("true"))
 	if err != nil {
-		return nil, fmt.Errorf("bulk index failed: %w", err)
+		return nil, nil, fmt.Errorf("bulk index request failed: %w", err)
 	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return nil, responseError("bulk index error", res)
+		err := responseError("bulk index error", res)
+		if retryableBulkStatus(res.StatusCode) {
+			return nil, operations, err
+		}
+		return nil, nil, err
 	}
 	var response struct {
 		Errors bool `json:"errors"`
 		Items  []map[string]struct {
-			ID     string         `json:"_id"`
-			Status int            `json:"status"`
-			Error  map[string]any `json:"error"`
+			ID     string          `json:"_id"`
+			Status int             `json:"status"`
+			Error  json.RawMessage `json:"error"`
 		} `json:"items"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("decode bulk index response failed: %w", err)
+		return nil, nil, fmt.Errorf("decode bulk index response failed: %w", err)
+	}
+	if len(response.Items) != len(operations) {
+		return nil, nil, fmt.Errorf("bulk index response item count %d, want %d", len(response.Items), len(operations))
 	}
 	indexed := make([]string, 0, len(response.Items))
-	failed := make([]string, 0)
-	for _, item := range response.Items {
-		for _, result := range item {
-			if result.Status >= 200 && result.Status < 300 && len(result.Error) == 0 {
-				indexed = append(indexed, result.ID)
-			} else {
-				failed = append(failed, result.ID)
-			}
+	var retry []bulkIndexOperation
+	var failures []error
+	permanentFailure := false
+	for i, item := range response.Items {
+		result, ok := item["index"]
+		if !ok || len(item) != 1 || result.ID != operations[i].id || result.Status < 100 || result.Status > 599 {
+			return indexed, nil, fmt.Errorf("invalid bulk index response for document %q", operations[i].id)
+		}
+		if result.Status >= 200 && result.Status < 300 && (len(result.Error) == 0 || string(result.Error) == "null") {
+			indexed = append(indexed, result.ID)
+			continue
+		}
+		failures = append(failures, fmt.Errorf("bulk document %q failed: status=%d error=%s", result.ID, result.Status, result.Error))
+		if retryableBulkStatus(result.Status) {
+			retry = append(retry, operations[i])
+		} else {
+			permanentFailure = true
 		}
 	}
-	if response.Errors || len(failed) > 0 {
-		return indexed, fmt.Errorf("bulk index partially failed: accepted=%d failed=%d", len(indexed), len(failed))
+	if response.Errors && len(failures) == 0 {
+		return indexed, nil, fmt.Errorf("bulk index response reports errors without failed items")
 	}
-	return indexed, nil
+	if permanentFailure {
+		retry = nil
+	}
+	return indexed, retry, errors.Join(failures...)
+}
+
+func retryableBulkStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 // SearchHits 搜索文档并保留命中 ID 与分数。
